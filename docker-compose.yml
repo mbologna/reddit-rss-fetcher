@@ -7,7 +7,16 @@ services:
     environment:
       - FEED_ID=${FEED_ID}
       - REDDIT_USER=${REDDIT_USER}
+      - SUBREDDITS=${SUBREDDITS}
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USERNAME=${REDDIT_USERNAME}
+      - REDDIT_PASSWORD=${REDDIT_PASSWORD}
+      - BASE_URL=${BASE_URL}
       - FETCH_INTERVAL_HOURS=${FETCH_INTERVAL_HOURS:-12}
+      - ARCHIVE_DAYS=${ARCHIVE_DAYS:-30}
+      - TOP_PERIOD=${TOP_PERIOD:-week}
+      - TOP_LIMIT=${TOP_LIMIT:-25}
       - OUTPUT_DIR=/output
     volumes:
       - ./output:/output
