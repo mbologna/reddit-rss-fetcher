@@ -1,0 +1,15 @@
+services:
+  reddit-rss-fetcher:
+    build: .
+    image: reddit-rss-fetcher:latest
+    container_name: reddit-rss-fetcher
+    restart: unless-stopped
+    environment:
+      - FEED_ID=${FEED_ID}
+      - REDDIT_USER=${REDDIT_USER}
+      - FETCH_INTERVAL_HOURS=${FETCH_INTERVAL_HOURS:-12}
+      - OUTPUT_DIR=/output
+    volumes:
+      - ./output:/output
+    labels:
+      autoheal: "true"

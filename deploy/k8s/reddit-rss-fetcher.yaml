@@ -1,0 +1,154 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reddit-rss-fetcher
+
+---
+# Copy to infra/apps/reddit-rss-fetcher/base/ and seal secrets with Sealed Secrets or ESO
+apiVersion: v1
+kind: Secret
+metadata:
+  name: reddit-rss-fetcher
+  namespace: reddit-rss-fetcher
+type: Opaque
+stringData:
+  FEED_ID: CHANGE_ME
+  REDDIT_USER: CHANGE_ME
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: reddit-rss-fetcher-output
+  namespace: reddit-rss-fetcher
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Mi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reddit-rss-fetcher-nginx
+  namespace: reddit-rss-fetcher
+data:
+  default.conf: |
+    server {
+        listen 80;
+        root /usr/share/nginx/html;
+        default_type application/xml;
+
+        location /reddit-rss-fetcher/ {
+            try_files $uri $uri.xml =404;
+        }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reddit-rss-fetcher
+  namespace: reddit-rss-fetcher
+  labels:
+    app.kubernetes.io/name: reddit-rss-fetcher
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reddit-rss-fetcher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: reddit-rss-fetcher
+    spec:
+      containers:
+        - name: fetcher
+          image: registry.gitlab.com/mbologna/reddit-rss-fetcher/main:latest
+          env:
+            - name: OUTPUT_DIR
+              value: /output
+            - name: FETCH_INTERVAL_HOURS
+              value: "12"
+          envFrom:
+            - secretRef:
+                name: reddit-rss-fetcher
+          volumeMounts:
+            - name: output
+              mountPath: /output
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 10m
+            limits:
+              memory: 256Mi
+              cpu: 250m
+
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: output
+              mountPath: /usr/share/nginx/html/reddit-rss-fetcher
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 5m
+            limits:
+              memory: 64Mi
+              cpu: 100m
+
+      volumes:
+        - name: output
+          persistentVolumeClaim:
+            claimName: reddit-rss-fetcher-output
+        - name: nginx-config
+          configMap:
+            name: reddit-rss-fetcher-nginx
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reddit-rss-fetcher
+  namespace: reddit-rss-fetcher
+spec:
+  selector:
+    app.kubernetes.io/name: reddit-rss-fetcher
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: reddit-rss-fetcher
+  namespace: reddit-rss-fetcher
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - CHANGE_ME_DOMAIN
+      secretName: reddit-rss-fetcher-tls
+  rules:
+    - host: CHANGE_ME_DOMAIN
+      http:
+        paths:
+          - path: /reddit-rss-fetcher/
+            pathType: Prefix
+            backend:
+              service:
+                name: reddit-rss-fetcher
+                port:
+                  number: 80
