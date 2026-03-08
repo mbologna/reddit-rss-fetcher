@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A self-hosted Reddit RSS fetcher that runs on a schedule, writes static XML feeds to disk, and lets nginx serve them directly. Deployed as a single Docker container on sierra (Hetzner VPS, Ansible-managed via `~/Code/infra`).
+A self-hosted Reddit RSS fetcher and subreddit archiver that runs on a schedule, writes static files to disk, and lets nginx serve them directly. Deployed as a single Docker container on sierra (Hetzner VPS, Ansible-managed via `~/Code/infra`).
 
-Replaces the previous PHP+Varnish stack. The cache is now implicit: nginx serves whatever XML was last written. The fetch interval controls freshness.
+Replaces the previous PHP+Varnish stack. The cache is now implicit: nginx serves whatever was last written. The fetch interval controls freshness.
 
 ## Repository Structure
 
@@ -26,8 +26,9 @@ deploy/
 
 - **`fetcher.py`** — runs in a loop, sleeping `FETCH_INTERVAL_HOURS` (default 12h) between cycles:
   - Fetches the authenticated Reddit front page RSS → writes `reddit-front-page.xml`
+  - For each subreddit in `SUBREDDITS`: fetches top posts via PRAW → writes `{subreddit}.xml` + `{subreddit}/{md5}.md` archives
   - Writes `last-run` (UTC ISO timestamp) after each cycle
-- Each fetcher is skipped with a warning if its credentials are missing
+- Each component is skipped with a warning if its credentials are missing
 - **Output directory** — bind-mounted at `/opt/reddit-rss-fetcher/output` on sierra; nginx serves it as static files
 - **No web server in the container** — the container only writes files; sierra's nginx handles all HTTP
 
@@ -60,6 +61,10 @@ location /reddit-rss-fetcher/ {
     alias /opt/reddit-rss-fetcher/output/;
     default_type application/xml;
     try_files $uri $uri.xml =404;
+
+    location ~* \.md$ {
+        default_type text/plain;
+    }
 }
 ```
 
@@ -68,6 +73,8 @@ The `try_files` directive preserves old Feedly URLs — `/reddit-rss-fetcher/red
 ### Feed URLs
 
 - `https://michelebologna.net/reddit-rss-fetcher/reddit-front-page` (Feedly URL, preserved)
+- `https://michelebologna.net/reddit-rss-fetcher/{subreddit}.xml`
+- `https://michelebologna.net/reddit-rss-fetcher/{subreddit}/{hash}.md`
 - `https://michelebologna.net/reddit-rss-fetcher/last-run` (health check)
 
 ## Deployment: Kubernetes / hotel (future)
@@ -89,16 +96,25 @@ Defined in `.env` (not committed), referenced in `docker-compose.yml`:
 
 | Variable | Required | Description |
 |---|---|---|
-| `FEED_ID` | yes | Reddit private RSS feed token |
-| `REDDIT_USER` | yes | Reddit username for front page feed URL |
+| `FEED_ID` | for front-page | Reddit private RSS feed token |
+| `REDDIT_USER` | for front-page | Reddit username for front page feed URL |
+| `SUBREDDITS` | for archiver | Comma-separated list of subreddits to archive |
+| `REDDIT_CLIENT_ID` | for archiver | PRAW OAuth client ID |
+| `REDDIT_CLIENT_SECRET` | for archiver | PRAW OAuth client secret |
+| `REDDIT_USERNAME` | for archiver | Reddit username for PRAW auth |
+| `REDDIT_PASSWORD` | for archiver | Reddit password for PRAW auth |
+| `BASE_URL` | for archiver | Public base URL for archived links (e.g. `https://michelebologna.net/reddit-rss-fetcher`) |
 | `FETCH_INTERVAL_HOURS` | no | Fetch interval in hours (default: `12`) |
+| `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |
+| `TOP_PERIOD` | no | Period for top posts: `hour`, `day`, `week`, `month`, `year`, `all` (default: `week`) |
+| `TOP_LIMIT` | no | Number of top posts per subreddit (default: `25`) |
 
 ## What Was Removed
 
 | Removed | Replaced by |
 |---|---|
 | `reddit-front-page.php` | `reddit-front-page.xml` written by fetcher |
-| `reddit-subreddit-top.php` | removed — was a dynamic endpoint (`?subreddit=X&period=Y`) |
+| `reddit-subreddit-top.php` | removed — was a dynamic endpoint (`?subreddit=X&period=Y`); configure via `SUBREDDITS` env var instead |
 | `time.php` | `last-run` file written after each cycle |
 | `default.vcl` + Varnish container | nginx serves static files; fetch interval controls cache TTL |
 | `deploy.sh` | Ansible handles deployment; CI handles image builds |

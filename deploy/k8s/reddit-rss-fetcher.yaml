@@ -15,6 +15,12 @@ type: Opaque
 stringData:
   FEED_ID: CHANGE_ME
   REDDIT_USER: CHANGE_ME
+  REDDIT_CLIENT_ID: CHANGE_ME
+  REDDIT_CLIENT_SECRET: CHANGE_ME
+  REDDIT_USERNAME: CHANGE_ME
+  REDDIT_PASSWORD: CHANGE_ME
+  BASE_URL: CHANGE_ME
+  SUBREDDITS: CHANGE_ME
 
 ---
 apiVersion: v1
@@ -44,6 +50,10 @@ data:
 
         location /reddit-rss-fetcher/ {
             try_files $uri $uri.xml =404;
+
+            location ~* \.md$ {
+                default_type text/plain;
+            }
         }
     }
 
@@ -75,6 +85,12 @@ spec:
               value: /output
             - name: FETCH_INTERVAL_HOURS
               value: "12"
+            - name: ARCHIVE_DAYS
+              value: "30"
+            - name: TOP_PERIOD
+              value: week
+            - name: TOP_LIMIT
+              value: "25"
           envFrom:
             - secretRef:
                 name: reddit-rss-fetcher
