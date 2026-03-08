@@ -34,7 +34,9 @@ FEED_ID = os.environ.get("FEED_ID", "")
 REDDIT_USER = os.environ.get("REDDIT_USER", "")
 
 # Subreddit archiver
-SUBREDDITS = [s.strip() for s in os.environ.get("SUBREDDITS", "").split(",") if s.strip()]
+SUBREDDITS = [
+    s.strip() for s in os.environ.get("SUBREDDITS", "").split(",") if s.strip()
+]
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
@@ -125,7 +127,9 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
 
 
 def fetch_subreddits() -> None:
-    if not all([REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD]):
+    if not all(
+        [REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD]
+    ):
         log.warning("PRAW credentials not set, skipping subreddit archiver")
         return
     if not SUBREDDITS:
