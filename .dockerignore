@@ -1,0 +1,9 @@
+.env
+.git
+.gitignore
+.dockerignore
+.gitlab-ci.yml
+CLAUDE.md
+docker-compose.yml
+deploy/
+output/
