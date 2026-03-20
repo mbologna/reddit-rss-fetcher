@@ -57,25 +57,29 @@ Secrets in `ansible/host_vars/sierra/vault.yaml` (ansible-vault).
 ### nginx (already deployed via infra)
 
 ```nginx
-location /reddit-rss-fetcher/ {
-    alias /opt/reddit-rss-fetcher/output/;
-    default_type application/xml;
-    try_files $uri $uri.xml =404;
+server {
+    server_name reddit-rss-fetcher.michelebologna.net;
+    root /opt/reddit-rss-fetcher/output;
 
-    location ~* \.md$ {
-        default_type text/plain;
+    location / {
+        default_type application/xml;
+        try_files $uri $uri.xml =404;
+
+        location ~* \.html$ {
+            default_type text/html;
+        }
     }
 }
 ```
 
-The `try_files` directive preserves old Feedly URLs — `/reddit-rss-fetcher/reddit-front-page` (no extension) resolves to `reddit-front-page.xml` automatically.
+The `try_files` directive allows extension-less URLs — `/reddit-front-page` resolves to `reddit-front-page.xml` automatically. `michelebologna.net` (WordPress) has no redirect to this subdomain.
 
 ### Feed URLs
 
-- `https://michelebologna.net/reddit-rss-fetcher/reddit-front-page` (Feedly URL, preserved)
-- `https://michelebologna.net/reddit-rss-fetcher/{subreddit}.xml`
-- `https://michelebologna.net/reddit-rss-fetcher/{subreddit}/{hash}.md`
-- `https://michelebologna.net/reddit-rss-fetcher/last-run` (health check)
+- `https://reddit-rss-fetcher.michelebologna.net/reddit-front-page` (Feedly URL)
+- `https://reddit-rss-fetcher.michelebologna.net/{subreddit}.xml`
+- `https://reddit-rss-fetcher.michelebologna.net/{subreddit}/{hash}.md`
+- `https://reddit-rss-fetcher.michelebologna.net/last-run` (health check)
 
 ## Deployment: Kubernetes / hotel (future)
 
