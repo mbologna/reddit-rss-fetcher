@@ -79,7 +79,7 @@ spec:
     spec:
       containers:
         - name: fetcher
-          image: registry.gitlab.com/mbologna/reddit-rss-fetcher/main:latest
+          image: ghcr.io/mbologna/reddit-rss-fetcher:latest
           env:
             - name: OUTPUT_DIR
               value: /output
