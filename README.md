@@ -2,6 +2,12 @@
 
 A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to disk, and lets nginx serve them directly — no database, no web framework.
 
+## Why this exists
+
+Reddit provides a personal RSS feed (your front page at `reddit.com/.rss?feed=TOKEN&user=USERNAME`), but adding it directly to a feed reader like Feedly results in stale content. The feed can lag by hours or more, caused by a combination of Reddit throttling requests from aggregators and Feedly's own polling intervals (free plans refresh anywhere from every 30 minutes to once a day). The result is that your personalised Reddit feed in Feedly is often many hours behind.
+
+This project works around that by self-hosting the fetch: a small Python process runs on your own server, pulls the feed on a configurable schedule (default every 12 hours), and writes static files that nginx serves directly. Your feed reader then subscribes to your own URL, which always reflects the latest fetch with no third-party caching in the way.
+
 ## What it does
 
 - **Front page feed** — fetches your authenticated Reddit front page RSS and writes `reddit-front-page.xml`
