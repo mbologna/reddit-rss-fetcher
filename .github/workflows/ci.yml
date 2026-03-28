@@ -27,7 +27,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: pytest tests/ -v --tb=short --cov=fetcher --cov-report=xml --cov-report=term-missing
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v6
         if: always()
         with:
           files: coverage.xml
