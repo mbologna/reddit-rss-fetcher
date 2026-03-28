@@ -6,3 +6,5 @@ output/
 coverage.xml
 .cache/
 .gitlab-ci-local/
+CLAUDE.md
+.gitlab-ci.yml
