@@ -28,4 +28,3 @@ jobs:
       enable_cosign: true
       enable_release_drafter: true
     secrets: inherit
-
