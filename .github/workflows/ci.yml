@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@52c23f956da99f55be4ae1cb41ad09953953eee7 # main
     with:
       python_version: "3.12"
       use_uv: false
@@ -27,7 +27,7 @@ jobs:
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@main
+    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@52c23f956da99f55be4ae1cb41ad09953953eee7 # main
     with:
       image_name: reddit-rss-fetcher
       push_to_dockerhub: false
