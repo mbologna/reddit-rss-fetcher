@@ -92,7 +92,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
     fg.link(href=f"https://reddit.com/r/{subreddit_name}", rel="alternate")
     fg.language("en")
 
-    for post in reddit.subreddit(subreddit_name).top(TOP_PERIOD, limit=TOP_LIMIT):
+    for post in reddit.subreddit(subreddit_name).top(time_filter=TOP_PERIOD, limit=TOP_LIMIT):
         url_hashed = hashlib.md5(post.url.encode("utf-8")).hexdigest()
         md_path = os.path.join(archive_dir, url_hashed + ".md")
         dt_utc = datetime.fromtimestamp(post.created_utc, tz=timezone.utc)
