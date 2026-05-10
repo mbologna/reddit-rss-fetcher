@@ -19,8 +19,8 @@ import os
 import time
 from datetime import datetime, timezone
 
-import pyotp
 import praw
+import pyotp
 import requests
 from feedgen.feed import FeedGenerator
 from pytz import timezone as pytz_timezone
