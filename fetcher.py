@@ -19,6 +19,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+import pyotp
 import praw
 import requests
 from feedgen.feed import FeedGenerator
@@ -41,6 +42,7 @@ REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
 REDDIT_PASSWORD = os.environ.get("REDDIT_PASSWORD", "")
+REDDIT_TOTP_SECRET = os.environ.get("REDDIT_TOTP_SECRET", "")
 BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
 ARCHIVE_DAYS = int(os.environ.get("ARCHIVE_DAYS", "30"))
 TOP_PERIOD = os.environ.get("TOP_PERIOD", "week")
@@ -65,12 +67,16 @@ def fetch_front_page() -> None:
 
 
 def build_reddit_client() -> praw.Reddit:
+    password = REDDIT_PASSWORD
+    if REDDIT_TOTP_SECRET:
+        totp = pyotp.TOTP(REDDIT_TOTP_SECRET).now()
+        password = f"{REDDIT_PASSWORD}:{totp}"
     return praw.Reddit(
         client_id=REDDIT_CLIENT_ID,
         client_secret=REDDIT_CLIENT_SECRET,
         user_agent="python:reddit-rss-fetcher:v2.0",
         username=REDDIT_USERNAME,
-        password=REDDIT_PASSWORD,
+        password=password,
     )
 
 
