@@ -3,10 +3,12 @@
 Reddit RSS fetcher and subreddit archiver.
 
 Runs on a configurable interval (default 12h), writes static files
-to OUTPUT_DIR for nginx to serve directly.
+to OUTPUT_DIR for nginx to serve directly, or to a GCS bucket when
+GCS_BUCKET is set (for Cloud Run Jobs scheduled by Cloud Scheduler).
 
 Outputs:
   reddit-front-page.xml      — authenticated Reddit front page feed
+  reddit-front-page          — extension-less copy (for Feedly)
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
   {subreddit}/{hash}.md      — archived post (pruned after ARCHIVE_DAYS days)
   last-run                   — UTC ISO timestamp of last successful cycle
@@ -17,7 +19,7 @@ import hashlib
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import praw
 import pyotp
@@ -29,6 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
+GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
 
 # Front page
 FEED_ID = os.environ.get("FEED_ID", "")
@@ -52,6 +55,37 @@ FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/110.0"
 
+_gcs_client = None
+
+
+def _gcs():
+    global _gcs_client
+    if _gcs_client is None:
+        from google.cloud import storage  # noqa: PLC0415
+
+        _gcs_client = storage.Client()
+    return _gcs_client
+
+
+def write_file(path, content, content_type="application/xml"):
+    """Write content to GCS or local filesystem depending on GCS_BUCKET."""
+    if GCS_BUCKET:
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        blob = _gcs().bucket(GCS_BUCKET).blob(path)
+        blob.cache_control = "public, max-age=43200"
+        blob.upload_from_string(content, content_type=content_type, timeout=60)
+    else:
+        out_path = os.path.join(OUTPUT_DIR, path)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        if isinstance(content, bytes):
+            with open(out_path, "wb") as f:
+                f.write(content)
+        else:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(content)
+    log.info("Wrote %s", path)
+
 
 def fetch_front_page() -> None:
     if not FEED_ID or not REDDIT_USER:
@@ -60,10 +94,8 @@ def fetch_front_page() -> None:
     url = f"https://www.reddit.com/.rss?feed={FEED_ID}&user={REDDIT_USER}&limit=10"
     r = requests.get(url, headers={"User-Agent": UA}, timeout=30)
     r.raise_for_status()
-    out = os.path.join(OUTPUT_DIR, "reddit-front-page.xml")
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(r.text)
-    log.info("Wrote %s", out)
+    write_file("reddit-front-page.xml", r.text)
+    write_file("reddit-front-page", r.text)  # extension-less copy for Feedly
 
 
 def build_reddit_client() -> praw.Reddit:
@@ -82,8 +114,6 @@ def build_reddit_client() -> praw.Reddit:
 
 def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
     localtz = pytz_timezone("Europe/Rome")
-    archive_dir = os.path.join(OUTPUT_DIR, subreddit_name)
-    os.makedirs(archive_dir, exist_ok=True)
 
     fg = FeedGenerator()
     fg.id(f"https://reddit.com/r/{subreddit_name}/")
@@ -96,7 +126,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
         time_filter=TOP_PERIOD, limit=TOP_LIMIT
     ):
         url_hashed = hashlib.md5(post.url.encode("utf-8")).hexdigest()
-        md_path = os.path.join(archive_dir, url_hashed + ".md")
+        md_rel_path = f"{subreddit_name}/{url_hashed}.md"
         dt_utc = datetime.fromtimestamp(post.created_utc, tz=timezone.utc)
         created = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -108,13 +138,12 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
             f"---\n\n"
             f"{post.selftext}\n"
         )
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(md_content)
+        write_file(md_rel_path, md_content, "text/plain; charset=utf-8")
 
         article_url = (
             f"{BASE_URL}/{subreddit_name}/{url_hashed}.md"
             if BASE_URL
-            else f"file://{md_path}"
+            else f"file://{os.path.join(OUTPUT_DIR, md_rel_path)}"
         )
         fe = fg.add_entry()
         fe.id(post.id)
@@ -123,15 +152,27 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
         fe.content(post.selftext + "\n\n" + post.url)
         fe.pubDate(dt_utc.astimezone(localtz))
 
-    out = os.path.join(OUTPUT_DIR, f"{subreddit_name}.xml")
-    fg.rss_file(out)
-    log.info("Wrote %s", out)
+    write_file(f"{subreddit_name}.xml", fg.rss_str(pretty=True))
 
-    for article in glob.glob(os.path.join(archive_dir, "*.md")):
-        age = (datetime.now() - datetime.fromtimestamp(os.stat(article).st_ctime)).days
-        if age >= ARCHIVE_DAYS:
-            os.remove(article)
-            log.info("Pruned %s", article)
+    _prune_archives(subreddit_name)
+
+
+def _prune_archives(subreddit_name: str) -> None:
+    if GCS_BUCKET:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ARCHIVE_DAYS)
+        for blob in _gcs().bucket(GCS_BUCKET).list_blobs(prefix=f"{subreddit_name}/"):
+            if blob.time_created < cutoff:
+                blob.delete()
+                log.info("Pruned %s", blob.name)
+    else:
+        archive_dir = os.path.join(OUTPUT_DIR, subreddit_name)
+        for article in glob.glob(os.path.join(archive_dir, "*.md")):
+            age = (
+                datetime.now() - datetime.fromtimestamp(os.stat(article).st_ctime)
+            ).days
+            if age >= ARCHIVE_DAYS:
+                os.remove(article)
+                log.info("Pruned %s", article)
 
 
 def fetch_subreddits() -> None:
@@ -151,9 +192,11 @@ def fetch_subreddits() -> None:
 
 
 def write_health() -> None:
-    path = os.path.join(OUTPUT_DIR, "last-run")
-    with open(path, "w") as f:
-        f.write(datetime.now(timezone.utc).isoformat())
+    write_file(
+        "last-run",
+        datetime.now(timezone.utc).isoformat(),
+        "text/plain; charset=utf-8",
+    )
 
 
 def run_all() -> None:
@@ -164,11 +207,16 @@ def run_all() -> None:
         except Exception:
             log.exception("Failed in %s", fn.__name__)
     write_health()
-    log.info("Fetch cycle complete, sleeping %dh", FETCH_INTERVAL_HOURS)
+    log.info("Fetch cycle complete")
 
 
 if __name__ == "__main__":
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    while True:
+    if GCS_BUCKET:
+        log.info("GCS_BUCKET=%s, running as Cloud Run Job (single cycle)", GCS_BUCKET)
         run_all()
-        time.sleep(FETCH_INTERVAL_HOURS * 3600)
+    else:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        while True:
+            run_all()
+            log.info("Sleeping %dh", FETCH_INTERVAL_HOURS)
+            time.sleep(FETCH_INTERVAL_HOURS * 3600)

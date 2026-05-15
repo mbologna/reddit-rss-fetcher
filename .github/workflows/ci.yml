@@ -35,3 +35,14 @@ jobs:
       enable_cosign: true
       enable_release_drafter: true
     secrets: inherit
+
+  deploy:
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@main
+    with:
+      image_name: reddit-rss-fetcher
+      ar_image: europe-west1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
+      deploy_type: job
+      deploy_name: reddit-rss-fetcher
+    secrets: inherit
