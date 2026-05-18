@@ -46,3 +46,14 @@ jobs:
       deploy_type: job
       deploy_name: reddit-rss-fetcher
     secrets: inherit
+
+  deploy_server:
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@ea59a4afeb9ba255cea7c09624130282ede2b23c # main
+    with:
+      image_name: reddit-rss-fetcher
+      ar_image: europe-west1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
+      deploy_type: service
+      deploy_name: reddit-rss-server
+    secrets: inherit
