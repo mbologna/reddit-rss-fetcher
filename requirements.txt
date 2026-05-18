@@ -4,3 +4,5 @@ feedgen
 pytz
 pyotp
 requests
+fastapi
+uvicorn[standard]
