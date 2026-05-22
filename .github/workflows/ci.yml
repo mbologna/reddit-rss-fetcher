@@ -45,6 +45,7 @@ jobs:
       ar_image: us-central1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
       deploy_type: job
       deploy_name: reddit-rss-fetcher
+      region: us-central1
     secrets: inherit
 
   deploy_server:
@@ -56,4 +57,5 @@ jobs:
       ar_image: us-central1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
       deploy_type: service
       deploy_name: reddit-rss-server
+      region: us-central1
     secrets: inherit
