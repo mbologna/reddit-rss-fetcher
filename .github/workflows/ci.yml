@@ -42,7 +42,7 @@ jobs:
     uses: mbologna/.github/.github/workflows/gcp-deploy.yml@aeb30e0b1fc4aef2b2c92b84dd07b87ab5e3ab6b # main
     with:
       image_name: reddit-rss-fetcher
-      ar_image: europe-west1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
+      ar_image: us-central1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
       deploy_type: job
       deploy_name: reddit-rss-fetcher
     secrets: inherit
@@ -53,7 +53,7 @@ jobs:
     uses: mbologna/.github/.github/workflows/gcp-deploy.yml@aeb30e0b1fc4aef2b2c92b84dd07b87ab5e3ab6b # main
     with:
       image_name: reddit-rss-fetcher
-      ar_image: europe-west1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
+      ar_image: us-central1-docker.pkg.dev/reddit-rss-fetcher-cal/fetcher/app
       deploy_type: service
       deploy_name: reddit-rss-server
     secrets: inherit
