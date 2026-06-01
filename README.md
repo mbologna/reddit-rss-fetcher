@@ -1,3 +1,7 @@
+The file isn't in the repo, so I'll return the rewritten content directly.
+
+---
+
 # reddit-rss-fetcher
 
 A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Job) or local disk (self-hosted), and serves them through a token-authenticated FastAPI proxy.
@@ -10,10 +14,10 @@ This project works around that by self-hosting the fetch: a small Python process
 
 ## What it does
 
-- **Front page feed** — fetches your authenticated Reddit front page RSS and writes `reddit-front-page.xml`
-- **Subreddit archiver** — for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days)
-- **Health check** — writes `last-run` (UTC ISO timestamp) after each cycle
-- **Auth proxy** (`server.py`) — FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/last-run` is public
+- **Front page feed:** fetches your authenticated Reddit front page RSS and writes `reddit-front-page.xml`
+- **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days)
+- **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle
+- **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/last-run` is public
 
 ## Quick start
 
@@ -37,7 +41,7 @@ docker compose up --build
 | `REDDIT_USERNAME` | for archiver | Reddit username for PRAW auth |
 | `REDDIT_PASSWORD` | for archiver | Reddit password for PRAW auth |
 | `BASE_URL` | for archiver | Public base URL for archived post links |
-| `GCS_BUCKET` | for GCS mode | Bucket name — enables Cloud Run Job mode (single cycle + exit) |
+| `GCS_BUCKET` | for GCS mode | Bucket name (enables Cloud Run Job mode: single cycle + exit) |
 | `OUTPUT_DIR` | for local mode | Output directory when GCS_BUCKET is not set (default: `/output`) |
 | `FETCH_INTERVAL_HOURS` | no | Fetch interval in hours (default: `12`, local mode only) |
 | `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |
