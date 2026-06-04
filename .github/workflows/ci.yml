@@ -36,17 +36,6 @@ jobs:
       enable_release_drafter: true
     secrets: inherit
 
-  deploy:
-    needs: [docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@60c0ffe12ebfe88e773c2780a7f71d80829ddfb4 # main
-    with:
-      image_name: reddit-rss-fetcher
-      deploy_type: job
-      deploy_name: reddit-rss-fetcher
-      region: us-central1
-    secrets: inherit
-
   deploy_server:
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

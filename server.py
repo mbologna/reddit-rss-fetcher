@@ -4,6 +4,7 @@ HTTP server for the reddit-rss-fetcher output.
 
 Reads files from the private GCS bucket and serves them with token auth.
 The /last-run endpoint is unauthenticated (used as a health check).
+The /fetch endpoint (POST) triggers a new fetch cycle on demand.
 
 Usage:
     SERVE_TOKEN=<secret> GCS_BUCKET=reddit.michelebologna.net uvicorn server:app --host 0.0.0.0 --port 8080
@@ -16,6 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
+from pydantic import BaseModel
 
 GCS_BUCKET = os.environ["GCS_BUCKET"]
 SERVE_TOKEN = os.environ["SERVE_TOKEN"]
@@ -41,6 +43,21 @@ def _read_blob(path: str) -> tuple[bytes, str]:
         return content, ct
     except NotFound:
         raise HTTPException(status_code=404, detail="Not found")
+
+
+class FetchRequest(BaseModel):
+    token: str = ""
+
+
+@app.post("/fetch")
+def trigger_fetch(req: FetchRequest):
+    """Trigger a new fetch cycle. Requires the same token used to serve feeds."""
+    if not secrets.compare_digest(req.token.encode(), SERVE_TOKEN.encode()):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    from fetcher import run_all
+
+    run_all()
+    return Response(status_code=200)
 
 
 @app.get("/last-run")
