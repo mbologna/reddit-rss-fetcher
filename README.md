@@ -74,13 +74,17 @@ output/
 
 ### Cloud Run (GCP)
 
-The fetcher runs as a Cloud Run Job (triggered by Cloud Scheduler every 12 hours) and writes to a private GCS bucket. A companion Cloud Run Service (`server.py`, `MODE=server`) reads from that bucket and serves files with token auth:
+A single Cloud Run Service (`MODE=server`) handles both serving and fetching:
+
+- **Feed serving** — reads from a private GCS bucket and serves files with token auth (always running, cpu_idle=true for always-free tier)
+- **Fetch trigger** — `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket; Cloud Scheduler calls this every 12 hours
 
 ```
-GET /last-run                           — 200, no auth (health check)
-GET /reddit-front-page?token=TOKEN      — 200, XML feed
-GET /reddit-front-page.xml?token=TOKEN  — same
-GET /reddit-front-page                  — 401 (missing token)
+POST /fetch                             — trigger fetch (body: {"token": "TOKEN"})
+GET  /last-run                          — 200, no auth (health check)
+GET  /reddit-front-page?token=TOKEN     — 200, XML feed
+GET  /reddit-front-page.xml?token=TOKEN — same
+GET  /reddit-front-page                 — 401 (missing token)
 ```
 
 Infrastructure: `../infra/terraform/reddit-rss-fetcher/`
