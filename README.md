@@ -1,7 +1,3 @@
-The file isn't in the repo, so I'll return the rewritten content directly.
-
----
-
 # reddit-rss-fetcher
 
 A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Job) or local disk (self-hosted), and serves them through a token-authenticated FastAPI proxy.
@@ -76,8 +72,8 @@ output/
 
 A single Cloud Run Service (`MODE=server`) handles both serving and fetching:
 
-- **Feed serving** — reads from a private GCS bucket and serves files with token auth (always running, cpu_idle=true for always-free tier)
-- **Fetch trigger** — `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket; Cloud Scheduler calls this every 12 hours
+- **Feed serving**: reads from a private GCS bucket and serves files with token auth (always running, cpu_idle=true for always-free tier)
+- **Fetch trigger**: `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket; Cloud Scheduler calls this every 12 hours
 
 ```
 POST /fetch                             — trigger fetch (body: {"token": "TOKEN"})
