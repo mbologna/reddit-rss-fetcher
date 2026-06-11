@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@af64a3169c2eb27c42434346d87d7116b44ec401 # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@34ce8b02522b62bb27e3d27ea66b46f6174be561 # main
     with:
       python_version: "3.12"
       use_uv: false
@@ -30,7 +30,7 @@ jobs:
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@af64a3169c2eb27c42434346d87d7116b44ec401 # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@34ce8b02522b62bb27e3d27ea66b46f6174be561 # main
     with:
       image_name: reddit-rss-fetcher
       push_to_dockerhub: true
@@ -42,7 +42,7 @@ jobs:
   auto-release:
     if: github.event_name == 'schedule'
     needs: [docker]
-    uses: mbologna/.github/.github/workflows/auto-release.yml@b76cd3762a1b6787ae79e88f7c012b2dc848f325 # main
+    uses: mbologna/.github/.github/workflows/auto-release.yml@34ce8b02522b62bb27e3d27ea66b46f6174be561 # main
     with:
       strategy: docker
       image: docker.io/mbologna/reddit-rss-fetcher
@@ -51,7 +51,7 @@ jobs:
   deploy_server:
     needs: [docker]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@af64a3169c2eb27c42434346d87d7116b44ec401 # main
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@34ce8b02522b62bb27e3d27ea66b46f6174be561 # main
     with:
       image_name: reddit-rss-fetcher
       deploy_type: service
