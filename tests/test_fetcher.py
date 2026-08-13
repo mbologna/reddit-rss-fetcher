@@ -6,7 +6,6 @@ import pytest
 
 import fetcher
 
-
 # ── fetch_front_page ──────────────────────────────────────────────────────────
 
 
@@ -51,9 +50,11 @@ def test_fetch_front_page_propagates_http_error(tmp_path, monkeypatch):
     mock_response = MagicMock()
     mock_response.raise_for_status.side_effect = Exception("HTTP 429")
 
-    with patch("fetcher.requests.get", return_value=mock_response):
-        with pytest.raises(Exception, match="HTTP 429"):
-            fetcher.fetch_front_page()
+    with (
+        patch("fetcher.requests.get", return_value=mock_response),
+        pytest.raises(Exception, match="HTTP 429"),
+    ):
+        fetcher.fetch_front_page()
 
 
 # ── fetch_subreddit ───────────────────────────────────────────────────────────
