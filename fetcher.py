@@ -61,7 +61,7 @@ _gcs_client = None
 def _gcs():
     global _gcs_client
     if _gcs_client is None:
-        from google.cloud import storage  # noqa: PLC0415
+        from google.cloud import storage
 
         _gcs_client = storage.Client()
     return _gcs_client
@@ -168,7 +168,8 @@ def _prune_archives(subreddit_name: str) -> None:
         archive_dir = os.path.join(OUTPUT_DIR, subreddit_name)
         for article in glob.glob(os.path.join(archive_dir, "*.md")):
             age = (
-                datetime.now() - datetime.fromtimestamp(os.stat(article).st_ctime)
+                datetime.now(tz=timezone.utc)
+                - datetime.fromtimestamp(os.stat(article).st_ctime, tz=timezone.utc)
             ).days
             if age >= ARCHIVE_DAYS:
                 os.remove(article)
