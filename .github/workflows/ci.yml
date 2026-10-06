@@ -54,7 +54,7 @@ jobs:
     with:
       image_name: reddit-rss-fetcher
       deploy_type: service
-      deploy_name: reddit-rss-server
+      deploy_name: reddit-rss-fetcher
       region: us-central1
     secrets: inherit
 
