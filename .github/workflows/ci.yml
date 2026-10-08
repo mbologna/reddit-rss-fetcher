@@ -23,7 +23,7 @@ jobs:
   python:
     uses: mbologna/.github/.github/workflows/python-ci.yml@56ec0eba66a17d43e9f4f573e9f64493b0a58895 # main
     with:
-      python_version: "3.12"
+      python_version: "3.14"
       use_uv: false
       enable_codecov: true
     secrets: inherit

@@ -1,7 +1,6 @@
 google-cloud-storage
 praw
 feedgen
-pytz
 pyotp
 requests
 fastapi

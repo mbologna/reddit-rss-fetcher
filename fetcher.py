@@ -25,7 +25,6 @@ import praw
 import pyotp
 import requests
 from feedgen.feed import FeedGenerator
-from pytz import timezone as pytz_timezone
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -113,8 +112,6 @@ def build_reddit_client() -> praw.Reddit:
 
 
 def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
-    localtz = pytz_timezone("Europe/Rome")
-
     fg = FeedGenerator()
     fg.id(f"https://reddit.com/r/{subreddit_name}/")
     fg.title(subreddit_name)
@@ -130,10 +127,11 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
         dt_utc = datetime.fromtimestamp(post.created_utc, tz=timezone.utc)
         created = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
 
+        author = post.author or "[deleted]"
         md_content = (
             f"# {post.title}\n\n"
             f"**Date:** {created} UTC  \n"
-            f"**Author:** u/{post.author}  \n"
+            f"**Author:** u/{author}  \n"
             f"**URL:** [{post.url}]({post.url})\n\n"
             f"---\n\n"
             f"{post.selftext}\n"
@@ -150,7 +148,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
         fe.title(post.title)
         fe.link(href=article_url)
         fe.content(post.selftext + "\n\n" + post.url)
-        fe.pubDate(dt_utc.astimezone(localtz))
+        fe.pubDate(dt_utc)
 
     write_file(f"{subreddit_name}.xml", fg.rss_str(pretty=True))
 
