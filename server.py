@@ -12,6 +12,7 @@ Usage:
 
 import os
 import secrets
+import threading
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -25,6 +26,7 @@ SERVE_TOKEN = os.environ["SERVE_TOKEN"]
 app = FastAPI(docs_url=None, redoc_url=None)
 
 _gcs_client = None
+_fetch_lock = threading.Lock()
 
 
 def _gcs():
@@ -54,9 +56,14 @@ def trigger_fetch(req: FetchRequest):
     """Trigger a new fetch cycle. Requires the same token used to serve feeds."""
     if not secrets.compare_digest(req.token.encode(), SERVE_TOKEN.encode()):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    from fetcher import run_all
+    if not _fetch_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Fetch already in progress")
+    try:
+        from fetcher import run_all
 
-    run_all()
+        run_all()
+    finally:
+        _fetch_lock.release()
     return Response(status_code=200)
 
 

@@ -1,5 +1,7 @@
 # reddit-rss-fetcher
 
+[MIT licensed](LICENSE).
+
 A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Job) or local disk (self-hosted), and serves them through a token-authenticated FastAPI proxy.
 
 ## Why this exists
@@ -23,6 +25,10 @@ docker compose up --build
 # feeds written to ./output/
 ```
 
+The container runs as a non-root user (uid `1000`). If `./output` already
+exists with different ownership, fix it with `chown -R 1000:1000 output` (or
+delete it and let Docker create it fresh) before starting.
+
 ## Environment variables
 
 ### Fetcher (`fetcher.py`)
@@ -36,6 +42,7 @@ docker compose up --build
 | `REDDIT_CLIENT_SECRET` | for archiver | PRAW OAuth client secret |
 | `REDDIT_USERNAME` | for archiver | Reddit username for PRAW auth |
 | `REDDIT_PASSWORD` | for archiver | Reddit password for PRAW auth |
+| `REDDIT_TOTP_SECRET` | no | TOTP secret if the account has 2FA enabled (appended to the password as a one-time code) |
 | `BASE_URL` | for archiver | Public base URL for archived post links |
 | `GCS_BUCKET` | for GCS mode | Bucket name (enables Cloud Run Job mode: single cycle + exit) |
 | `OUTPUT_DIR` | for local mode | Output directory when GCS_BUCKET is not set (default: `/output`) |
