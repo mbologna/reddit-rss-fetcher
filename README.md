@@ -3,7 +3,7 @@
 [![CI](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml)
 [MIT licensed](LICENSE).
 
-A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Job) or local disk (self-hosted), and serves them through a token-authenticated FastAPI proxy.
+A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Service, triggered by Cloud Scheduler) or local disk (self-hosted), and serves them through a token-authenticated FastAPI proxy.
 
 ## Why this exists
 
@@ -45,7 +45,7 @@ delete it and let Docker create it fresh) before starting.
 | `REDDIT_PASSWORD` | for archiver | Reddit password for PRAW auth |
 | `REDDIT_TOTP_SECRET` | no | TOTP secret if the account has 2FA enabled (appended to the password as a one-time code) |
 | `BASE_URL` | for archiver | Public base URL for archived post links |
-| `GCS_BUCKET` | for GCS mode | Bucket name (enables Cloud Run Job mode: single cycle + exit) |
+| `GCS_BUCKET` | for GCS mode | Bucket name (enables GCS mode: running `fetcher.py` directly does a single cycle and exits; on Cloud Run, `server.py` runs the cycle on `POST /fetch`) |
 | `OUTPUT_DIR` | for local mode | Output directory when GCS_BUCKET is not set (default: `/output`) |
 | `FETCH_INTERVAL_HOURS` | no | Fetch interval in hours (default: `12`, local mode only) |
 | `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |

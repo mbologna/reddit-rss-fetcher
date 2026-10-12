@@ -4,7 +4,7 @@ Reddit RSS fetcher and subreddit archiver.
 
 Runs on a configurable interval (default 12h), writes static files
 to OUTPUT_DIR for nginx to serve directly, or to a GCS bucket when
-GCS_BUCKET is set (for Cloud Run Jobs scheduled by Cloud Scheduler).
+GCS_BUCKET is set (on Cloud Run, server.py calls run_all() on POST /fetch).
 
 Outputs:
   reddit-front-page.xml      — authenticated Reddit front page feed
@@ -211,7 +211,7 @@ def run_all() -> None:
 
 if __name__ == "__main__":
     if GCS_BUCKET:
-        log.info("GCS_BUCKET=%s, running as Cloud Run Job (single cycle)", GCS_BUCKET)
+        log.info("GCS_BUCKET=%s, running a single cycle", GCS_BUCKET)
         run_all()
     else:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
