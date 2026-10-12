@@ -19,7 +19,7 @@ import hashlib
 import logging
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import praw
 import pyotp
@@ -124,7 +124,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
     ):
         url_hashed = hashlib.md5(post.url.encode("utf-8")).hexdigest()
         md_rel_path = f"{subreddit_name}/{url_hashed}.md"
-        dt_utc = datetime.fromtimestamp(post.created_utc, tz=timezone.utc)
+        dt_utc = datetime.fromtimestamp(post.created_utc, tz=UTC)
         created = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
 
         author = post.author or "[deleted]"
@@ -157,7 +157,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
 
 def _prune_archives(subreddit_name: str) -> None:
     if GCS_BUCKET:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=ARCHIVE_DAYS)
+        cutoff = datetime.now(UTC) - timedelta(days=ARCHIVE_DAYS)
         for blob in _gcs().bucket(GCS_BUCKET).list_blobs(prefix=f"{subreddit_name}/"):
             if blob.time_created < cutoff:
                 blob.delete()
@@ -166,8 +166,8 @@ def _prune_archives(subreddit_name: str) -> None:
         archive_dir = os.path.join(OUTPUT_DIR, subreddit_name)
         for article in glob.glob(os.path.join(archive_dir, "*.md")):
             age = (
-                datetime.now(tz=timezone.utc)
-                - datetime.fromtimestamp(os.stat(article).st_ctime, tz=timezone.utc)
+                datetime.now(tz=UTC)
+                - datetime.fromtimestamp(os.stat(article).st_ctime, tz=UTC)
             ).days
             if age >= ARCHIVE_DAYS:
                 os.remove(article)
@@ -193,7 +193,7 @@ def fetch_subreddits() -> None:
 def write_health() -> None:
     write_file(
         "last-run",
-        datetime.now(timezone.utc).isoformat(),
+        datetime.now(UTC).isoformat(),
         "text/plain; charset=utf-8",
     )
 
