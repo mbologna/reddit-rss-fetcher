@@ -1,7 +1,0 @@
-google-cloud-storage
-praw
-feedgen
-pyotp
-requests
-fastapi
-uvicorn[standard]

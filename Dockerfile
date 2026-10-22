@@ -1,8 +1,13 @@
 FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 WORKDIR /app
 RUN useradd -r -u 1000 appuser
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a /uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock ./
+# Install the locked runtime dependencies with their hashes; --locked fails
+# the build if uv.lock no longer matches pyproject.toml
+RUN uv export --quiet --locked --no-dev --no-emit-project --no-header -o /tmp/requirements.txt \
+    && uv pip install --system --no-cache --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 COPY fetcher.py .
 COPY server.py .
 COPY run.sh .

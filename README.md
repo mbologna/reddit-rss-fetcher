@@ -133,8 +133,10 @@ Base Kustomize manifests are in `deploy/k8s/`. The deployment uses a **sidecar p
 ## Development
 
 ```bash
-pip install -r requirements.txt -r requirements-dev.txt
-pytest tests/ -v
+uv sync
+uv run pytest tests/ -v
 ```
 
-Linting: `ruff check . && ruff format --check .`
+Linting: `uv run ruff check . && uv run ruff format --check .`
+
+Dependencies resolve only to releases at least 7 days old (`exclude-newer` in `pyproject.toml`), and the Docker image installs exactly what `uv.lock` pins. To take a CVE fix released less than 7 days ago, add a temporary `exclude-newer-package = { <package> = false }` override under `[tool.uv]`, run `uv lock --upgrade-package <package>`, and drop the override once the release is a week old.

@@ -1,2 +1,33 @@
+[project]
+name = "reddit-rss-fetcher"
+version = "0.1.0"
+description = "Self-hosted Reddit RSS fetcher and subreddit archiver"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.143.1",
+    "feedgen>=1.0.0",
+    "google-cloud-storage>=3.17.0",
+    "praw>=8.0.3",
+    "pyotp>=2.10.0",
+    "requests>=2.34.2",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.0",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.12.12"
+# Resolve only releases at least 7 days old (supply-chain cooldown). For an
+# urgent fix, temporarily add exclude-newer-package = { <name> = false } and
+# run `uv lock --upgrade-package <name>`.
+exclude-newer = "7 days"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]

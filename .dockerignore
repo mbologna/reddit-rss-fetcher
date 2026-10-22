@@ -7,3 +7,4 @@ CLAUDE.md
 docker-compose.yml
 deploy/
 output/
+.venv/
