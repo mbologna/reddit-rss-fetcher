@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@717c3959205c8ddcab484d5f92ffccc05352f434 # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@4ba7c7930fdf79124c856073037b1f20a41ea98e # main
     with:
       python_version: "3.15"
       use_uv: true
@@ -33,7 +33,7 @@ jobs:
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@717c3959205c8ddcab484d5f92ffccc05352f434 # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@4ba7c7930fdf79124c856073037b1f20a41ea98e # main
     with:
       image_name: reddit-rss-fetcher
       # push: the deploy job below runs the sha-* image of each
@@ -59,7 +59,7 @@ jobs:
       contents: write
       actions: write
     needs: [docker]
-    uses: mbologna/.github/.github/workflows/auto-release.yml@717c3959205c8ddcab484d5f92ffccc05352f434 # main
+    uses: mbologna/.github/.github/workflows/auto-release.yml@4ba7c7930fdf79124c856073037b1f20a41ea98e # main
     with:
       strategy: conventional
       image: docker.io/mbologna/reddit-rss-fetcher
@@ -71,8 +71,10 @@ jobs:
     # at any time), and that merge is the deploy. Monday's schedule rebuilds the
     # same pinned base image, so redeploying it only moved a deploy out of the
     # window.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@717c3959205c8ddcab484d5f92ffccc05352f434 # main
+    # docker-ci skips the build when only docs or CI files changed, and then
+    # pushes no image: deploy only what was built.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.docker.outputs.digest != ''
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@4ba7c7930fdf79124c856073037b1f20a41ea98e # main
     with:
       image_name: reddit-rss-fetcher
       deploy_type: service
@@ -82,7 +84,7 @@ jobs:
 
   cache-cleanup:
     if: github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/cache-cleanup.yml@717c3959205c8ddcab484d5f92ffccc05352f434 # main
+    uses: mbologna/.github/.github/workflows/cache-cleanup.yml@4ba7c7930fdf79124c856073037b1f20a41ea98e # main
     with:
       max_age_days: 7
     permissions:
