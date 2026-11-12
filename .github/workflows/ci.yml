@@ -16,75 +16,38 @@ concurrency:
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
-  security-events: write
+  contents: read
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@4ab7563caf5d7d861f5275163417627e38eecc0e # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@5797c3f0e987ee045b00d0a1640dfcdce3c45ce0 # main
     with:
       python_version: "3.15"
-      use_uv: true
       enable_codecov: true
     secrets: inherit
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@4ab7563caf5d7d861f5275163417627e38eecc0e # main
-    with:
-      image_name: reddit-rss-fetcher
-      # push: the deploy job below runs the sha-* image of each
-      # main build, so main keeps publishing.
-      publish: push
-      push_to_dockerhub: true
-      enable_cosign: true
-    secrets: inherit
-
-  auto-release:
-    # Monday's schedule and a manual run release with the strategy below; a push
-    # to the default branch releases only a CVE fix (the wrapper switches to the
-    # security strategy). The tag build auto-release dispatches runs on the tag
-    # ref, so it does not release again.
-    if: >-
-      github.event_name == 'schedule' ||
-      ((github.event_name == 'workflow_dispatch' || github.event_name == 'push') &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
-    # contents: push the tag and create the Release; actions: dispatch this
-    # workflow on it, since a tag pushed with GITHUB_TOKEN triggers no run.
+    # contents: the release tag and its Release; actions: dispatch the tag
+    # build (a tag pushed with GITHUB_TOKEN triggers no run); the rest:
+    # push, sign and scan the image, and deploy it.
     permissions:
       contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
       actions: write
-    needs: [docker]
-    uses: mbologna/.github/.github/workflows/auto-release.yml@4ab7563caf5d7d861f5275163417627e38eecc0e # main
-    with:
-      strategy: conventional
-      image: docker.io/mbologna/reddit-rss-fetcher
-    secrets: inherit
-
-  deploy_server:
-    needs: [docker]
-    # A push to main only: Renovate merges in the Tue/Wed/Thu window (CVE fixes
-    # at any time), and that merge is the deploy. Monday's schedule rebuilds the
-    # same pinned base image, so redeploying it only moved a deploy out of the
-    # window.
-    # docker-ci skips the build when only docs or CI files changed, and then
-    # pushes no image: deploy only what was built.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.docker.outputs.digest != ''
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@4ab7563caf5d7d861f5275163417627e38eecc0e # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@5797c3f0e987ee045b00d0a1640dfcdce3c45ce0 # main
     with:
       image_name: reddit-rss-fetcher
+      # push: the Cloud Run deploy runs the sha-* image of each
+      # main build, so main keeps publishing.
+      publish: push
+      # auto-release runs inside docker-ci: Monday's schedule releases with
+      # this strategy, a push to main only a CVE fix.
+      release_strategy: conventional
+      # Points the Cloud Run service at the image of each push or manual run
+      # on main that builds one; a docs- or CI-only push deploys nothing.
       deploy_type: service
-      deploy_name: reddit-rss-fetcher
-      region: us-central1
     secrets: inherit
-
-  cache-cleanup:
-    if: github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/cache-cleanup.yml@4ab7563caf5d7d861f5275163417627e38eecc0e # main
-    with:
-      max_age_days: 7
-    permissions:
-      actions: write
