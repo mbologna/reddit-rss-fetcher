@@ -1,23 +1,32 @@
-FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
-WORKDIR /app
-RUN useradd -r -u 1000 appuser
-# uv from PyPI, hash-checked (requirements-uv.txt says why).
+FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS build
+
+# uv from PyPI, hash-checked (requirements-uv.txt says why). Used in this
+# stage only: the runtime stage gets the finished virtualenv.
 COPY requirements-uv.txt /tmp/
 RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes -r /tmp/requirements-uv.txt
+# Install exactly what uv.lock pins, checking its hashes; --locked fails the
+# build if uv.lock no longer matches pyproject.toml. The project itself is not
+# a package (package = false), so only its dependencies land in the venv.
+# Bytecode is compiled here because the runtime image sets
+# PYTHONDONTWRITEBYTECODE.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON=/usr/local/bin/python3 UV_PYTHON_DOWNLOADS=never \
+    UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_CACHE=1
+WORKDIR /tmp/build
 COPY pyproject.toml uv.lock ./
-# Install the locked runtime dependencies with their hashes; --locked fails
-# the build if uv.lock no longer matches pyproject.toml
-RUN uv export --quiet --locked --no-dev --no-emit-project --no-header -o /tmp/requirements.txt \
-    && uv pip install --system --no-cache --require-hashes -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
-# pip only installs the image's dependencies at build time. Removing it
-# (with the packages it vendors) and ensurepip's bundled pip wheel keeps
-# their CVEs out of the image: nothing runs pip at run time.
+RUN uv sync --locked --no-dev --no-editable
+
+FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
+COPY --from=build /opt/venv /opt/venv
+# run.sh's python and uvicorn are the venv's.
+ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+# The base image's pip (with the packages it vendors) and ensurepip's
+# bundled pip wheel are never used at run time; removing them keeps their
+# CVEs out of the image.
 RUN /usr/local/bin/python3 -m pip uninstall -y --root-user-action=ignore pip \
     && rm -rf /usr/local/lib/python3*/ensurepip
-COPY fetcher.py .
-COPY server.py .
-COPY run.sh .
+WORKDIR /app
+RUN useradd -r -u 1000 appuser
+COPY fetcher.py server.py run.sh ./
 RUN chmod +x run.sh && chown -R appuser:appuser /app && mkdir -p /output && chown appuser:appuser /output
 USER appuser
 CMD ["/app/run.sh"]
