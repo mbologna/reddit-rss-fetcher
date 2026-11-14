@@ -31,3 +31,11 @@ exclude-newer = "7 days"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.coverage.run]
+# The two modules the image runs; the tests don't count.
+source = ["fetcher", "server"]
+
+[tool.coverage.report]
+# The current total, rounded down: CI fails when coverage drops below it.
+fail_under = 93
