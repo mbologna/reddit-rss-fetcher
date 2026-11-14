@@ -198,3 +198,111 @@ def test_run_all_continues_on_partial_failure(tmp_path, monkeypatch, caplog):
 
     assert "network error" in caplog.text
     assert (tmp_path / "last-run").exists()  # health still written
+
+
+# ── storage and archive pruning ───────────────────────────────────────────────
+
+
+@pytest.fixture
+def fake_bucket(monkeypatch):
+    """GCS mode with a mocked client; returns the bucket mock."""
+    monkeypatch.setattr(fetcher, "GCS_BUCKET", "feeds")
+    monkeypatch.setattr(fetcher, "_gcs_client", None)
+    client = MagicMock()
+    with patch("google.cloud.storage.Client", return_value=client):
+        yield client.bucket.return_value
+
+
+def test_write_file_uploads_encoded_text_to_gcs(fake_bucket):
+    fetcher.write_file("sub.xml", "héllo")
+
+    blob = fake_bucket.blob.return_value
+    fake_bucket.blob.assert_called_once_with("sub.xml")
+    blob.upload_from_string.assert_called_once_with(
+        "héllo".encode(), content_type="application/xml", timeout=60
+    )
+    assert blob.cache_control == "public, max-age=43200"
+
+
+def test_write_file_reuses_the_gcs_client(fake_bucket):
+    fetcher.write_file("a", b"1")
+    first = fetcher._gcs_client
+    fetcher.write_file("b", b"2")
+    assert fetcher._gcs_client is first
+
+
+def test_write_file_writes_bytes_locally(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "GCS_BUCKET", "")
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+
+    fetcher.write_file("sub/post.bin", b"\x00\x01")
+
+    assert (tmp_path / "sub" / "post.bin").read_bytes() == b"\x00\x01"
+
+
+def test_prune_archives_deletes_old_gcs_blobs(fake_bucket, monkeypatch):
+    monkeypatch.setattr(fetcher, "ARCHIVE_DAYS", 30)
+    now = datetime.now(fetcher.UTC)
+    old, new = MagicMock(), MagicMock()
+    old.time_created = now - fetcher.timedelta(days=31)
+    new.time_created = now - fetcher.timedelta(days=1)
+    fake_bucket.list_blobs.return_value = [old, new]
+
+    fetcher._prune_archives("python")
+
+    fake_bucket.list_blobs.assert_called_once_with(prefix="python/")
+    old.delete.assert_called_once_with()
+    new.delete.assert_not_called()
+
+
+def test_prune_archives_removes_expired_local_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "GCS_BUCKET", "")
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    (tmp_path / "python").mkdir()
+    (tmp_path / "python" / "a.md").write_text("x")
+    (tmp_path / "python" / "keep.txt").write_text("x")
+
+    # Age 0 days already reaches a 0-day limit.
+    monkeypatch.setattr(fetcher, "ARCHIVE_DAYS", 0)
+    fetcher._prune_archives("python")
+
+    assert not (tmp_path / "python" / "a.md").exists()
+    assert (tmp_path / "python" / "keep.txt").exists()
+
+
+def test_prune_archives_keeps_recent_local_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "GCS_BUCKET", "")
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(fetcher, "ARCHIVE_DAYS", 30)
+    (tmp_path / "python").mkdir()
+    (tmp_path / "python" / "a.md").write_text("x")
+
+    fetcher._prune_archives("python")
+
+    assert (tmp_path / "python" / "a.md").exists()
+
+
+# ── build_reddit_client ───────────────────────────────────────────────────────
+
+
+def test_build_reddit_client_appends_totp_code(monkeypatch):
+    monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pw")
+    monkeypatch.setattr(fetcher, "REDDIT_TOTP_SECRET", "JBSWY3DPEHPK3PXP")
+    with (
+        patch("fetcher.pyotp.TOTP") as totp,
+        patch("fetcher.praw.Reddit") as reddit,
+    ):
+        totp.return_value.now.return_value = "123456"
+        fetcher.build_reddit_client()
+
+    totp.assert_called_once_with("JBSWY3DPEHPK3PXP")
+    assert reddit.call_args.kwargs["password"] == "pw:123456"
+
+
+def test_build_reddit_client_without_totp(monkeypatch):
+    monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pw")
+    monkeypatch.setattr(fetcher, "REDDIT_TOTP_SECRET", "")
+    with patch("fetcher.praw.Reddit") as reddit:
+        fetcher.build_reddit_client()
+
+    assert reddit.call_args.kwargs["password"] == "pw"

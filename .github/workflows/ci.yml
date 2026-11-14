@@ -50,4 +50,6 @@ jobs:
       # Points the Cloud Run service at the image of each push or manual run
       # on main that builds one; a docs- or CI-only push deploys nothing.
       deploy_type: service
+      # Offline start check: both modes' modules import (server reads two env vars).
+      smoke_cmd: "python -c 'import fetcher' && GCS_BUCKET= SERVE_TOKEN= python -c 'import server, uvicorn'"
     secrets: inherit
