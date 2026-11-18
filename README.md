@@ -17,7 +17,7 @@ Reddit is also closing its public Data API (new apps refused since 2026-10-31, t
 
 - **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline
 - **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days); each item links to its Reddit thread, with an `[archived copy]` link to the Markdown file
-- **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle
+- **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle in which no step failed; `GET /last-run` turns 503 once it is older than `STALE_AFTER_HOURS`
 - **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/last-run` is public
 
 ## Quick start
@@ -62,6 +62,7 @@ To get a Reddit OAuth client ID and secret, create a "script" app at <https://ww
 |---|---|---|
 | `GCS_BUCKET` | yes | GCS bucket containing the fetched files |
 | `SERVE_TOKEN` | yes | Token required on `?token=` query parameter for feed endpoints |
+| `STALE_AFTER_HOURS` | no | Age of `last-run` at which `/last-run` returns 503 (default: `25`, two missed 12-hour cycles) |
 
 Set `MODE=server` to start `server.py` instead of `fetcher.py` (the `run.sh` entrypoint reads this).
 
@@ -83,11 +84,11 @@ output/
 A single Cloud Run Service (`MODE=server`) handles both serving and fetching:
 
 - **Feed serving**: reads from a private GCS bucket and serves files with token auth (always running, cpu_idle=true for always-free tier)
-- **Fetch trigger**: `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket; Cloud Scheduler calls this every 12 hours
+- **Fetch trigger**: `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket, answering 500 if any step failed; Cloud Scheduler calls this every 12 hours
 
 ```
 POST /fetch                             — trigger fetch (body: {"token": "TOKEN"})
-GET  /last-run                          — 200, no auth (health check)
+GET  /last-run                          — 200, no auth (health check); 503 when stale
 GET  /reddit-front-page?token=TOKEN     — 200, XML feed
 GET  /reddit-front-page.xml?token=TOKEN — same
 GET  /reddit-front-page                 — 401 (missing token)

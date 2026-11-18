@@ -242,10 +242,11 @@ def test_run_all_skips_fetching_without_credentials(tmp_path, monkeypatch, caplo
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
 
     with patch("fetcher.build_reddit_client") as build:
-        fetcher.run_all()
+        assert fetcher.run_all() is False
 
     build.assert_not_called()
     assert "PRAW credentials not set" in caplog.text
+    assert not (tmp_path / "last-run").exists()
 
 
 def test_run_all_shares_one_client(tmp_path, monkeypatch):
@@ -258,15 +259,16 @@ def test_run_all_shares_one_client(tmp_path, monkeypatch):
     mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
 
     with patch("fetcher.build_reddit_client", return_value=mock_reddit) as build:
-        fetcher.run_all()
+        assert fetcher.run_all() is True
 
     build.assert_called_once_with()
     assert (tmp_path / "reddit-front-page.xml").exists()
     assert (tmp_path / "python.xml").exists()
+    assert (tmp_path / "last-run").exists()
 
 
 def test_run_all_continues_on_partial_failure(tmp_path, monkeypatch, caplog):
-    """If one fetcher fails, run_all logs the error and continues."""
+    """If one step fails, run_all logs it, runs the rest, and reports failure."""
     _set_credentials(monkeypatch, "x")
     monkeypatch.setattr(fetcher, "SUBREDDITS", ["python"])
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
@@ -276,11 +278,11 @@ def test_run_all_continues_on_partial_failure(tmp_path, monkeypatch, caplog):
     mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
 
     with patch("fetcher.build_reddit_client", return_value=mock_reddit):
-        fetcher.run_all()  # must not raise
+        assert fetcher.run_all() is False  # must not raise
 
     assert "network error" in caplog.text
     assert (tmp_path / "python.xml").exists()
-    assert (tmp_path / "last-run").exists()  # health still written
+    assert not (tmp_path / "last-run").exists()  # health not refreshed
 
 
 # ── storage and archive pruning ───────────────────────────────────────────────
