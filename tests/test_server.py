@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("GCS_BUCKET", "test-bucket")
@@ -34,17 +35,36 @@ def _mock_blob(content=b"<rss></rss>", content_type="application/xml", found=Tru
 # ── GET /last-run (no auth) ────────────────────────────────────────────────
 
 
-def test_last_run_requires_no_token():
-    mock_blob = _mock_blob(content=b"2026-01-01T00:00:00+00:00")
+def _get_last_run(timestamp, method="GET"):
     mock_bucket = MagicMock()
-    mock_bucket.blob.return_value = mock_blob
-
+    mock_bucket.blob.return_value = _mock_blob(content=timestamp.encode())
     with patch.object(server, "_gcs") as mock_gcs:
         mock_gcs.return_value.bucket.return_value = mock_bucket
-        resp = client.get("/last-run")
+        return client.request(method, "/last-run")
+
+
+def test_last_run_requires_no_token():
+    recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+    resp = _get_last_run(recent)
 
     assert resp.status_code == 200
-    assert resp.text == "2026-01-01T00:00:00+00:00"
+    assert resp.text == recent
+
+
+def test_last_run_answers_head():
+    recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+    assert _get_last_run(recent, method="HEAD").status_code == 200
+
+
+def test_last_run_is_503_when_stale():
+    old = (datetime.now(UTC) - timedelta(hours=26)).isoformat()
+
+    resp = _get_last_run(old)
+
+    assert resp.status_code == 503
+    assert resp.text == old
 
 
 # ── GET /{path} ─────────────────────────────────────────────────────────────
@@ -107,11 +127,19 @@ def test_fetch_rejects_invalid_token():
 
 
 def test_fetch_triggers_run_all_with_valid_token():
-    with patch("fetcher.run_all") as mock_run_all:
+    with patch("fetcher.run_all", return_value=True) as mock_run_all:
         resp = client.post("/fetch", json={"token": server.SERVE_TOKEN})
 
     assert resp.status_code == 200
     mock_run_all.assert_called_once()
+
+
+def test_fetch_returns_500_when_a_step_failed():
+    with patch("fetcher.run_all", return_value=False):
+        resp = client.post("/fetch", json={"token": server.SERVE_TOKEN})
+
+    assert resp.status_code == 500
+    assert not server._fetch_lock.locked()
 
 
 def test_fetch_returns_409_when_already_in_progress():

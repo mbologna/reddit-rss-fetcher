@@ -3,8 +3,10 @@
 HTTP server for the reddit-rss-fetcher output.
 
 Reads files from the private GCS bucket and serves them with token auth.
-The /last-run endpoint is unauthenticated (used as a health check).
-The /fetch endpoint (POST) triggers a new fetch cycle on demand.
+The /last-run endpoint is unauthenticated (used as a health check): 503 once
+the last good cycle is older than STALE_AFTER_HOURS.
+The /fetch endpoint (POST) triggers a new fetch cycle on demand; 500 if a step
+failed.
 
 Usage:
     SERVE_TOKEN=<secret> GCS_BUCKET=reddit.michelebologna.net uvicorn server:app --host 0.0.0.0 --port 8080
@@ -13,6 +15,7 @@ Usage:
 import os
 import secrets
 import threading
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -22,6 +25,9 @@ from pydantic import BaseModel
 
 GCS_BUCKET = os.environ["GCS_BUCKET"]
 SERVE_TOKEN = os.environ["SERVE_TOKEN"]
+# Two 12-hourly cycles plus slack: one failed cycle (Reddit hiccups) is no
+# alert, two in a row are.
+STALE_AFTER = timedelta(hours=float(os.environ.get("STALE_AFTER_HOURS", "25")))
 
 app = FastAPI(docs_url=None, redoc_url=None)
 
@@ -61,17 +67,30 @@ def trigger_fetch(req: FetchRequest):
     try:
         from fetcher import run_all
 
-        run_all()
+        ok = run_all()
     finally:
         _fetch_lock.release()
+    if not ok:
+        # Cloud Scheduler records the run as failed; the logs say which step.
+        raise HTTPException(status_code=500, detail="Fetch cycle failed")
     return Response(status_code=200)
 
 
-@app.get("/last-run")
+# HEAD too: UptimeRobot probes with HEAD first.
+@app.api_route("/last-run", methods=["GET", "HEAD"])
 def health():
-    """Return the UTC timestamp of the last successful fetch cycle (no auth)."""
+    """Return the UTC timestamp of the last good fetch cycle (no auth).
+
+    503 when it is older than STALE_AFTER: fetching has been failing.
+    """
     content, _ = _read_blob("last-run")
-    return Response(content=content, media_type="text/plain; charset=utf-8")
+    last_run = datetime.fromisoformat(content.decode().strip())
+    stale = datetime.now(UTC) - last_run > STALE_AFTER
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        status_code=503 if stale else 200,
+    )
 
 
 @app.get("/{path:path}")

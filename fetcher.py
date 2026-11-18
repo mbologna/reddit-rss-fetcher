@@ -11,7 +11,7 @@ Outputs:
   reddit-front-page          — extension-less copy (for Feedly)
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
   {subreddit}/{hash}.md      — archived post (pruned after ARCHIVE_DAYS days)
-  last-run                   — UTC ISO timestamp of last successful cycle
+  last-run                   — UTC ISO timestamp of the last cycle with no failed step
 """
 
 import glob
@@ -239,20 +239,31 @@ def write_health() -> None:
     )
 
 
-def run_all() -> None:
+def run_all() -> bool:
+    """Run every step; True, and a new last-run, only when none failed.
+
+    A failed step doesn't stop the others, but leaves last-run at the last
+    good cycle, so /last-run goes stale and the uptime check notices.
+    """
     log.info("Starting fetch cycle")
     if not has_credentials():
-        log.warning("PRAW credentials not set, skipping front page and archiver")
-    else:
-        # One client for both: it logs in once, with a single TOTP code.
-        reddit = build_reddit_client()
-        for fn in (fetch_front_page, fetch_subreddits):
-            try:
-                fn(reddit)
-            except Exception:
-                log.exception("Failed in %s", fn.__name__)
+        log.error("PRAW credentials not set, nothing to fetch")
+        return False
+    # One client for both: it logs in once, with a single TOTP code.
+    reddit = build_reddit_client()
+    ok = True
+    for fn in (fetch_front_page, fetch_subreddits):
+        try:
+            fn(reddit)
+        except Exception:
+            log.exception("Failed in %s", fn.__name__)
+            ok = False
+    if not ok:
+        log.error("Fetch cycle failed, last-run left unchanged")
+        return False
     write_health()
     log.info("Fetch cycle complete")
+    return True
 
 
 if __name__ == "__main__":
