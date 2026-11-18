@@ -7,7 +7,7 @@ to OUTPUT_DIR for nginx to serve directly, or to a GCS bucket when
 GCS_BUCKET is set (on Cloud Run, server.py calls run_all() on POST /fetch).
 
 Outputs:
-  reddit-front-page.xml      — authenticated Reddit front page feed
+  reddit-front-page.xml      — your Reddit front page (hot), built from the API
   reddit-front-page          — extension-less copy (for Feedly)
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
   {subreddit}/{hash}.md      — archived post (pruned after ARCHIVE_DAYS days)
@@ -16,6 +16,7 @@ Outputs:
 
 import glob
 import hashlib
+import html
 import logging
 import os
 import time
@@ -23,7 +24,6 @@ from datetime import UTC, datetime, timedelta
 
 import praw
 import pyotp
-import requests
 from feedgen.feed import FeedGenerator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -31,10 +31,6 @@ log = logging.getLogger(__name__)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
-
-# Front page
-FEED_ID = os.environ.get("FEED_ID", "")
-REDDIT_USER = os.environ.get("REDDIT_USER", "")
 
 # Subreddit archiver
 SUBREDDITS = [
@@ -50,9 +46,9 @@ ARCHIVE_DAYS = int(os.environ.get("ARCHIVE_DAYS", "30"))
 TOP_PERIOD = os.environ.get("TOP_PERIOD", "week")
 TOP_LIMIT = int(os.environ.get("TOP_LIMIT", "25"))
 
-FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
+FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "10"))
 
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/110.0"
+FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
 
 _gcs_client = None
 
@@ -86,15 +82,43 @@ def write_file(path, content, content_type="application/xml"):
     log.info("Wrote %s", path)
 
 
-def fetch_front_page() -> None:
-    if not FEED_ID or not REDDIT_USER:
-        log.warning("FEED_ID or REDDIT_USER not set, skipping front page")
-        return
-    url = f"https://www.reddit.com/.rss?feed={FEED_ID}&user={REDDIT_USER}&limit=10"
-    r = requests.get(url, headers={"User-Agent": UA}, timeout=30)
-    r.raise_for_status()
-    write_file("reddit-front-page.xml", r.text)
-    write_file("reddit-front-page", r.text)  # extension-less copy for Feedly
+def fetch_front_page(reddit: praw.Reddit) -> None:
+    """Write the account's front page as RSS.
+
+    Reddit stopped serving RSS (including the private reddit.com/.rss?feed=
+    front page) on 2026-11-13, so the feed is built from the API listing.
+    """
+    fg = FeedGenerator()
+    fg.id("https://www.reddit.com/")
+    fg.title("reddit: the front page")
+    fg.description("Hot posts from your Reddit front page")
+    fg.link(href="https://www.reddit.com/", rel="alternate")
+    fg.language("en")
+    fg.load_extension("dc")
+
+    for post in reddit.front.hot(limit=FRONT_PAGE_LIMIT):
+        permalink = f"https://www.reddit.com{post.permalink}"
+        subreddit = f"r/{post.subreddit.display_name}"
+        body = post.selftext_html or ""
+        footer = (
+            f"<p>{html.escape(subreddit)} "
+            f'<a href="{html.escape(post.url)}">[link]</a> '
+            f'<a href="{html.escape(permalink)}">[comments]</a></p>'
+        )
+
+        fe = fg.add_entry(order="append")
+        fe.id(f"t3_{post.id}")
+        fe.title(post.title)
+        fe.link(href=permalink)
+        # Feed readers show dc:creator as the byline: the subreddit says more
+        # on a front page than the poster's name.
+        fe.dc.dc_creator(subreddit)
+        fe.description(body + footer)
+        fe.pubDate(datetime.fromtimestamp(post.created_utc, tz=UTC))
+
+    feed = fg.rss_str(pretty=True)
+    write_file("reddit-front-page.xml", feed)
+    write_file("reddit-front-page", feed)  # extension-less copy for Feedly
 
 
 def build_reddit_client() -> praw.Reddit:
@@ -174,18 +198,18 @@ def _prune_archives(subreddit_name: str) -> None:
                 log.info("Pruned %s", article)
 
 
-def fetch_subreddits() -> None:
-    if not all(
+def has_credentials() -> bool:
+    return all(
         [REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD]
-    ):
-        log.warning("PRAW credentials not set, skipping subreddit archiver")
-        return
+    )
+
+
+def fetch_subreddits(reddit: praw.Reddit) -> None:
     if not SUBREDDITS:
         log.warning("SUBREDDITS not set, skipping subreddit archiver")
         return
 
     log.info("Archiving subreddits: %s", ", ".join(SUBREDDITS))
-    reddit = build_reddit_client()
     for subreddit_name in SUBREDDITS:
         fetch_subreddit(reddit, subreddit_name)
 
@@ -200,11 +224,16 @@ def write_health() -> None:
 
 def run_all() -> None:
     log.info("Starting fetch cycle")
-    for fn in (fetch_front_page, fetch_subreddits):
-        try:
-            fn()
-        except Exception:
-            log.exception("Failed in %s", fn.__name__)
+    if not has_credentials():
+        log.warning("PRAW credentials not set, skipping front page and archiver")
+    else:
+        # One client for both: it logs in once, with a single TOTP code.
+        reddit = build_reddit_client()
+        for fn in (fetch_front_page, fetch_subreddits):
+            try:
+                fn(reddit)
+            except Exception:
+                log.exception("Failed in %s", fn.__name__)
     write_health()
     log.info("Fetch cycle complete")
 

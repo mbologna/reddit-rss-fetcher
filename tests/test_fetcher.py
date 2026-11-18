@@ -9,52 +9,69 @@ import fetcher
 # ── fetch_front_page ──────────────────────────────────────────────────────────
 
 
-def test_fetch_front_page_skips_when_no_credentials(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr(fetcher, "FEED_ID", "")
-    monkeypatch.setattr(fetcher, "REDDIT_USER", "")
-    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+def _make_mock_front_post(
+    post_id="xyz789",
+    title="Front <Page> Post",
+    url="https://example.com/article",
+    permalink="/r/python/comments/xyz789/front_page_post/",
+    selftext_html="<p>Body &amp; more</p>",
+    created_utc=1700000000.0,
+    author="poster",
+    subreddit="python",
+):
+    post = MagicMock()
+    post.id = post_id
+    post.title = title
+    post.url = url
+    post.permalink = permalink
+    post.selftext_html = selftext_html
+    post.created_utc = created_utc
+    post.author = author
+    post.subreddit.display_name = subreddit
+    return post
 
-    fetcher.fetch_front_page()
+
+def test_fetch_front_page_writes_rss_from_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(fetcher, "FRONT_PAGE_LIMIT", 10)
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [
+        _make_mock_front_post(),
+        _make_mock_front_post(post_id="second", title="Second", selftext_html=None),
+    ]
+
+    fetcher.fetch_front_page(mock_reddit)
+
+    mock_reddit.front.hot.assert_called_once_with(limit=10)
+    xml = (tmp_path / "reddit-front-page.xml").read_bytes()
+    assert (tmp_path / "reddit-front-page").read_bytes() == xml
+    items = ET.fromstring(xml).findall("./channel/item")
+    # Hot ranking order, not feedgen's default prepend.
+    assert [i.findtext("title") for i in items] == ["Front <Page> Post", "Second"]
+    first = items[0]
+    assert first.findtext("guid") == "t3_xyz789"
+    assert (
+        first.findtext("link")
+        == "https://www.reddit.com/r/python/comments/xyz789/front_page_post/"
+    )
+    dc = "{http://purl.org/dc/elements/1.1/}creator"
+    assert first.findtext(dc) == "r/python"
+    description = first.findtext("description")
+    assert "<p>Body &amp; more</p>" in description
+    assert "r/python" in description
+    assert "poster" not in xml.decode()
+    assert '<a href="https://example.com/article">[link]</a>' in description
+
+
+def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.side_effect = Exception("HTTP 429")
+
+    with pytest.raises(Exception, match="HTTP 429"):
+        fetcher.fetch_front_page(mock_reddit)
 
     assert not (tmp_path / "reddit-front-page.xml").exists()
-    assert "skipping front page" in caplog.text
-
-
-def test_fetch_front_page_writes_xml(tmp_path, monkeypatch):
-    monkeypatch.setattr(fetcher, "FEED_ID", "testtoken")
-    monkeypatch.setattr(fetcher, "REDDIT_USER", "testuser")
-    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
-
-    mock_response = MagicMock()
-    mock_response.text = "<rss><channel><title>Test</title></channel></rss>"
-    mock_response.raise_for_status = MagicMock()
-
-    with patch("fetcher.requests.get", return_value=mock_response) as mock_get:
-        fetcher.fetch_front_page()
-
-    out = tmp_path / "reddit-front-page.xml"
-    assert out.exists()
-    assert out.read_text() == "<rss><channel><title>Test</title></channel></rss>"
-
-    call_url = mock_get.call_args[0][0]
-    assert "testtoken" in call_url
-    assert "testuser" in call_url
-    assert "limit=10" in call_url
-
-
-def test_fetch_front_page_propagates_http_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(fetcher, "FEED_ID", "testtoken")
-    monkeypatch.setattr(fetcher, "REDDIT_USER", "testuser")
-    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status.side_effect = Exception("HTTP 429")
-
-    with (
-        patch("fetcher.requests.get", return_value=mock_response),
-        pytest.raises(Exception, match="HTTP 429"),
-    ):
-        fetcher.fetch_front_page()
 
 
 # ── fetch_subreddit ───────────────────────────────────────────────────────────
@@ -121,39 +138,19 @@ def test_fetch_subreddit_uses_correct_subreddit_name(tmp_path, monkeypatch):
 # ── fetch_subreddits ──────────────────────────────────────────────────────────
 
 
-def test_fetch_subreddits_skips_when_no_credentials(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr(fetcher, "REDDIT_CLIENT_ID", "")
-    monkeypatch.setattr(fetcher, "REDDIT_CLIENT_SECRET", "")
-    monkeypatch.setattr(fetcher, "REDDIT_USERNAME", "")
-    monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "")
-    monkeypatch.setattr(fetcher, "SUBREDDITS", ["askreddit"])
-    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
-
-    fetcher.fetch_subreddits()
-
-    assert "PRAW credentials not set" in caplog.text
-    assert not list(tmp_path.glob("*.xml"))
-
-
 def test_fetch_subreddits_skips_when_no_subreddits(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr(fetcher, "REDDIT_CLIENT_ID", "id")
-    monkeypatch.setattr(fetcher, "REDDIT_CLIENT_SECRET", "secret")
-    monkeypatch.setattr(fetcher, "REDDIT_USERNAME", "user")
-    monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pass")
     monkeypatch.setattr(fetcher, "SUBREDDITS", [])
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    mock_reddit = MagicMock()
 
-    fetcher.fetch_subreddits()
+    fetcher.fetch_subreddits(mock_reddit)
 
     assert "SUBREDDITS not set" in caplog.text
+    mock_reddit.subreddit.assert_not_called()
     assert not list(tmp_path.glob("*.xml"))
 
 
 def test_fetch_subreddits_fetches_multiple(tmp_path, monkeypatch):
-    monkeypatch.setattr(fetcher, "REDDIT_CLIENT_ID", "id")
-    monkeypatch.setattr(fetcher, "REDDIT_CLIENT_SECRET", "secret")
-    monkeypatch.setattr(fetcher, "REDDIT_USERNAME", "user")
-    monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pass")
     monkeypatch.setattr(fetcher, "SUBREDDITS", ["askreddit", "worldnews"])
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(fetcher, "BASE_URL", "")
@@ -163,8 +160,7 @@ def test_fetch_subreddits_fetches_multiple(tmp_path, monkeypatch):
     mock_reddit = MagicMock()
     mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
 
-    with patch("fetcher.build_reddit_client", return_value=mock_reddit):
-        fetcher.fetch_subreddits()
+    fetcher.fetch_subreddits(mock_reddit)
 
     assert (tmp_path / "askreddit.xml").exists()
     assert (tmp_path / "worldnews.xml").exists()
@@ -187,16 +183,59 @@ def test_write_health_creates_valid_timestamp(tmp_path, monkeypatch):
 # ── run_all ───────────────────────────────────────────────────────────────────
 
 
+def _set_credentials(monkeypatch, value):
+    for name in (
+        "REDDIT_CLIENT_ID",
+        "REDDIT_CLIENT_SECRET",
+        "REDDIT_USERNAME",
+        "REDDIT_PASSWORD",
+    ):
+        monkeypatch.setattr(fetcher, name, value)
+
+
+def test_run_all_skips_fetching_without_credentials(tmp_path, monkeypatch, caplog):
+    _set_credentials(monkeypatch, "")
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+
+    with patch("fetcher.build_reddit_client") as build:
+        fetcher.run_all()
+
+    build.assert_not_called()
+    assert "PRAW credentials not set" in caplog.text
+
+
+def test_run_all_shares_one_client(tmp_path, monkeypatch):
+    _set_credentials(monkeypatch, "x")
+    monkeypatch.setattr(fetcher, "SUBREDDITS", ["python"])
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(fetcher, "BASE_URL", "")
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [_make_mock_front_post()]
+    mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
+
+    with patch("fetcher.build_reddit_client", return_value=mock_reddit) as build:
+        fetcher.run_all()
+
+    build.assert_called_once_with()
+    assert (tmp_path / "reddit-front-page.xml").exists()
+    assert (tmp_path / "python.xml").exists()
+
+
 def test_run_all_continues_on_partial_failure(tmp_path, monkeypatch, caplog):
     """If one fetcher fails, run_all logs the error and continues."""
+    _set_credentials(monkeypatch, "x")
+    monkeypatch.setattr(fetcher, "SUBREDDITS", ["python"])
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
-    monkeypatch.setattr(fetcher, "FEED_ID", "tok")
-    monkeypatch.setattr(fetcher, "REDDIT_USER", "u")
+    monkeypatch.setattr(fetcher, "BASE_URL", "")
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.side_effect = Exception("network error")
+    mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
 
-    with patch("fetcher.requests.get", side_effect=Exception("network error")):
+    with patch("fetcher.build_reddit_client", return_value=mock_reddit):
         fetcher.run_all()  # must not raise
 
     assert "network error" in caplog.text
+    assert (tmp_path / "python.xml").exists()
     assert (tmp_path / "last-run").exists()  # health still written
 
 
