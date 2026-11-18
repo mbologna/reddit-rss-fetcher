@@ -150,7 +150,8 @@ def build_reddit_client() -> praw.Reddit:
     return praw.Reddit(
         client_id=REDDIT_CLIENT_ID,
         client_secret=REDDIT_CLIENT_SECRET,
-        user_agent="python:reddit-rss-fetcher:v2.0",
+        # Reddit's API rules: <platform>:<app ID>:<version> (by /u/<username>)
+        user_agent=f"python:reddit-rss-fetcher:v2.0 (by /u/{REDDIT_USERNAME})",
         username=REDDIT_USERNAME,
         password=password,
     )
