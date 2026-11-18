@@ -21,6 +21,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 import praw
 import pyotp
@@ -42,6 +43,8 @@ REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
 REDDIT_PASSWORD = os.environ.get("REDDIT_PASSWORD", "")
 REDDIT_TOTP_SECRET = os.environ.get("REDDIT_TOTP_SECRET", "")
 BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
+# The server's feed token: archived-copy links need it (empty in local mode)
+SERVE_TOKEN = os.environ.get("SERVE_TOKEN", "")
 ARCHIVE_DAYS = int(os.environ.get("ARCHIVE_DAYS", "30"))
 TOP_PERIOD = os.environ.get("TOP_PERIOD", "week")
 TOP_LIMIT = int(os.environ.get("TOP_LIMIT", "25"))
@@ -82,39 +85,57 @@ def write_file(path, content, content_type="application/xml"):
     log.info("Wrote %s", path)
 
 
+def _new_feed(title: str, description: str, link: str) -> FeedGenerator:
+    fg = FeedGenerator()
+    fg.id(link)
+    fg.title(title)
+    fg.description(description)
+    fg.link(href=link, rel="alternate")
+    fg.language("en")
+    fg.load_extension("dc")
+    return fg
+
+
+def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
+    """Add a post that links to its Reddit thread, bylined with its subreddit."""
+    permalink = f"https://www.reddit.com{post.permalink}"
+    subreddit = f"r/{post.subreddit.display_name}"
+    links = []
+    if post.url != permalink:  # a link post; a self post's url is its thread
+        links.append(("link", post.url))
+    links.append(("comments", permalink))
+    if archive_url:
+        links.append(("archived copy", archive_url))
+    footer = " ".join(
+        f'<a href="{html.escape(url)}">[{label}]</a>' for label, url in links
+    )
+
+    fe = fg.add_entry(order="append")
+    fe.id(post.fullname)
+    fe.title(post.title)
+    fe.link(href=permalink)
+    # Feed readers show dc:creator as the byline: the subreddit says more
+    # on a front page than the poster's name.
+    fe.dc.dc_creator(subreddit)
+    fe.description(
+        (post.selftext_html or "") + f"<p>{html.escape(subreddit)} {footer}</p>"
+    )
+    fe.pubDate(datetime.fromtimestamp(post.created_utc, tz=UTC))
+
+
 def fetch_front_page(reddit: praw.Reddit) -> None:
     """Write the account's front page as RSS.
 
     Reddit stopped serving RSS (including the private reddit.com/.rss?feed=
     front page) on 2026-11-13, so the feed is built from the API listing.
     """
-    fg = FeedGenerator()
-    fg.id("https://www.reddit.com/")
-    fg.title("reddit: the front page")
-    fg.description("Hot posts from your Reddit front page")
-    fg.link(href="https://www.reddit.com/", rel="alternate")
-    fg.language("en")
-    fg.load_extension("dc")
-
+    fg = _new_feed(
+        "reddit: the front page",
+        "Hot posts from your Reddit front page",
+        "https://www.reddit.com/",
+    )
     for post in reddit.front.hot(limit=FRONT_PAGE_LIMIT):
-        permalink = f"https://www.reddit.com{post.permalink}"
-        subreddit = f"r/{post.subreddit.display_name}"
-        body = post.selftext_html or ""
-        footer = (
-            f"<p>{html.escape(subreddit)} "
-            f'<a href="{html.escape(post.url)}">[link]</a> '
-            f'<a href="{html.escape(permalink)}">[comments]</a></p>'
-        )
-
-        fe = fg.add_entry(order="append")
-        fe.id(f"t3_{post.id}")
-        fe.title(post.title)
-        fe.link(href=permalink)
-        # Feed readers show dc:creator as the byline: the subreddit says more
-        # on a front page than the poster's name.
-        fe.dc.dc_creator(subreddit)
-        fe.description(body + footer)
-        fe.pubDate(datetime.fromtimestamp(post.created_utc, tz=UTC))
+        _add_post(fg, post)
 
     feed = fg.rss_str(pretty=True)
     write_file("reddit-front-page.xml", feed)
@@ -135,13 +156,20 @@ def build_reddit_client() -> praw.Reddit:
     )
 
 
+def _archive_url(md_rel_path: str) -> str:
+    if not BASE_URL:
+        return f"file://{os.path.join(OUTPUT_DIR, md_rel_path)}"
+    # server.py serves the archive only with the feed's own token.
+    query = f"?token={quote(SERVE_TOKEN)}" if SERVE_TOKEN else ""
+    return f"{BASE_URL}/{md_rel_path}{query}"
+
+
 def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
-    fg = FeedGenerator()
-    fg.id(f"https://reddit.com/r/{subreddit_name}/")
-    fg.title(subreddit_name)
-    fg.description(f"r/{subreddit_name} — top posts of the {TOP_PERIOD}")
-    fg.link(href=f"https://reddit.com/r/{subreddit_name}", rel="alternate")
-    fg.language("en")
+    fg = _new_feed(
+        subreddit_name,
+        f"r/{subreddit_name} — top posts of the {TOP_PERIOD}",
+        f"https://www.reddit.com/r/{subreddit_name}/",
+    )
 
     for post in reddit.subreddit(subreddit_name).top(
         time_filter=TOP_PERIOD, limit=TOP_LIMIT
@@ -161,18 +189,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
             f"{post.selftext}\n"
         )
         write_file(md_rel_path, md_content, "text/plain; charset=utf-8")
-
-        article_url = (
-            f"{BASE_URL}/{subreddit_name}/{url_hashed}.md"
-            if BASE_URL
-            else f"file://{os.path.join(OUTPUT_DIR, md_rel_path)}"
-        )
-        fe = fg.add_entry()
-        fe.id(post.id)
-        fe.title(post.title)
-        fe.link(href=article_url)
-        fe.content(post.selftext + "\n\n" + post.url)
-        fe.pubDate(dt_utc)
+        _add_post(fg, post, _archive_url(md_rel_path))
 
     write_file(f"{subreddit_name}.xml", fg.rss_str(pretty=True))
 
