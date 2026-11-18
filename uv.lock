@@ -1000,7 +1000,6 @@ dependencies = [
     { name = "google-cloud-storage" },
     { name = "praw" },
     { name = "pyotp" },
-    { name = "requests" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1019,7 +1018,6 @@ requires-dist = [
     { name = "google-cloud-storage", specifier = ">=3.17.0" },
     { name = "praw", specifier = ">=8.0.3" },
     { name = "pyotp", specifier = ">=2.10.0" },
-    { name = "requests", specifier = ">=2.34.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
 

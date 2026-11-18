@@ -7,13 +7,15 @@ A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable 
 
 ## Why this exists
 
-Reddit provides a personal RSS feed (your front page at `reddit.com/.rss?feed=TOKEN&user=USERNAME`), but adding it directly to a feed reader like Feedly results in stale content. The feed can lag by hours or more, caused by a combination of Reddit throttling requests from aggregators and Feedly's own polling intervals (free plans refresh anywhere from every 30 minutes to once a day). The result is that your personalised Reddit feed in Feedly is often many hours behind.
+Reddit used to provide a personal RSS feed of your front page (`reddit.com/.rss?feed=TOKEN&user=USERNAME`), but added directly to a feed reader like Feedly it lagged by hours, between Reddit throttling aggregators and Feedly's own polling intervals. On 2026-11-13 Reddit stopped serving RSS altogether.
 
-This project works around that by self-hosting the fetch: a small Python process runs on a configurable schedule, pulls the feed, and writes static files. Your feed reader subscribes to your own URL, which always reflects the latest fetch with no third-party caching in the way.
+This project self-hosts the fetch: a small Python process runs on a configurable schedule, reads your front page and subreddits through the Reddit API, and writes static RSS files. Your feed reader subscribes to your own URL, which always reflects the latest fetch.
+
+Reddit is also closing its public Data API (new apps refused since 2026-10-31, the rest shut off by March 2027); once that happens this project stops working.
 
 ## What it does
 
-- **Front page feed:** fetches your authenticated Reddit front page RSS and writes `reddit-front-page.xml`
+- **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline
 - **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days)
 - **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle
 - **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/last-run` is public
@@ -36,13 +38,11 @@ delete it and let Docker create it fresh) before starting.
 
 | Variable | Required | Description |
 |---|---|---|
-| `FEED_ID` | for front-page | Reddit private RSS feed token |
-| `REDDIT_USER` | for front-page | Reddit username for front page feed URL |
+| `REDDIT_CLIENT_ID` | yes | PRAW OAuth client ID |
+| `REDDIT_CLIENT_SECRET` | yes | PRAW OAuth client secret |
+| `REDDIT_USERNAME` | yes | Reddit username for PRAW auth (its front page is the feed) |
+| `REDDIT_PASSWORD` | yes | Reddit password for PRAW auth |
 | `SUBREDDITS` | for archiver | Comma-separated list of subreddits to archive |
-| `REDDIT_CLIENT_ID` | for archiver | PRAW OAuth client ID |
-| `REDDIT_CLIENT_SECRET` | for archiver | PRAW OAuth client secret |
-| `REDDIT_USERNAME` | for archiver | Reddit username for PRAW auth |
-| `REDDIT_PASSWORD` | for archiver | Reddit password for PRAW auth |
 | `REDDIT_TOTP_SECRET` | no | TOTP secret if the account has 2FA enabled (appended to the password as a one-time code) |
 | `BASE_URL` | for archiver | Public base URL for archived post links |
 | `GCS_BUCKET` | for GCS mode | Bucket name (enables GCS mode: running `fetcher.py` directly does a single cycle and exits; on Cloud Run, `server.py` runs the cycle on `POST /fetch`) |
@@ -51,6 +51,7 @@ delete it and let Docker create it fresh) before starting.
 | `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |
 | `TOP_PERIOD` | no | Period for top posts: `hour`, `day`, `week`, `month`, `year`, `all` (default: `week`) |
 | `TOP_LIMIT` | no | Number of top posts per subreddit (default: `25`) |
+| `FRONT_PAGE_LIMIT` | no | Number of front page posts (default: `10`) |
 
 To get a Reddit OAuth client ID and secret, create a "script" app at <https://www.reddit.com/prefs/apps>.
 
@@ -67,7 +68,7 @@ Set `MODE=server` to start `server.py` instead of `fetcher.py` (the `run.sh` ent
 
 ```
 output/
-  reddit-front-page.xml       — authenticated front page feed
+  reddit-front-page.xml       — front page feed (hot posts)
   reddit-front-page           — extension-less copy (for Feedly)
   {subreddit}.xml             — top posts RSS feed
   {subreddit}/{hash}.md       — archived post (title, author, URL, selftext)
