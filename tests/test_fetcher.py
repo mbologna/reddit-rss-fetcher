@@ -384,6 +384,14 @@ def test_build_reddit_client_appends_totp_code(monkeypatch):
     assert reddit.call_args.kwargs["password"] == "pw:123456"
 
 
+def test_build_reddit_client_names_the_account_in_the_user_agent(monkeypatch):
+    monkeypatch.setattr(fetcher, "REDDIT_USERNAME", "someone")
+    with patch("fetcher.praw.Reddit") as reddit:
+        fetcher.build_reddit_client()
+
+    assert reddit.call_args.kwargs["user_agent"].endswith(" (by /u/someone)")
+
+
 def test_build_reddit_client_without_totp(monkeypatch):
     monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pw")
     monkeypatch.setattr(fetcher, "REDDIT_TOTP_SECRET", "")
