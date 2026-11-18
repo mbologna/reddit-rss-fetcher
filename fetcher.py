@@ -2,9 +2,9 @@
 """
 Reddit RSS fetcher and subreddit archiver.
 
-Runs on a configurable interval (default 12h), writes static files
-to OUTPUT_DIR for nginx to serve directly, or to a GCS bucket when
-GCS_BUCKET is set (on Cloud Run, server.py calls run_all() on POST /fetch).
+Writes static files to a GCS bucket when GCS_BUCKET is set (on Cloud Run,
+server.py calls run_all() on POST /fetch), otherwise to OUTPUT_DIR on a
+configurable interval (default 12h; local development).
 
 Outputs:
   reddit-front-page.xml      — your Reddit front page (hot), built from the API

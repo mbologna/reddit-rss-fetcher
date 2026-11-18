@@ -3,7 +3,7 @@
 [![CI](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml)
 [MIT licensed](LICENSE).
 
-A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Service, triggered by Cloud Scheduler) or local disk (self-hosted), and serves them through a token-authenticated FastAPI proxy.
+A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Service, triggered by Cloud Scheduler), and serves them through a token-authenticated FastAPI proxy. A local mode writes to disk instead, for development.
 
 ## Why this exists
 
@@ -96,25 +96,9 @@ GET  /reddit-front-page                 — 401 (missing token)
 
 Infrastructure: `../infra/terraform/reddit-rss-fetcher/`
 
-### Self-hosted (nginx)
+### Locally
 
-Run the fetcher locally and serve `OUTPUT_DIR` with nginx:
-
-```nginx
-server {
-    server_name your-domain.example.com;
-    root /path/to/output;
-
-    location / {
-        default_type application/xml;
-        try_files $uri $uri.xml =404;
-
-        location ~* \.md$ {
-            default_type text/plain;
-        }
-    }
-}
-```
+Without `GCS_BUCKET`, the fetcher writes to `OUTPUT_DIR` and repeats every `FETCH_INTERVAL_HOURS` (see [Quick start](#quick-start)). Nothing serves the files in that mode, and archived post links are `file://` paths unless `BASE_URL` is set: it is meant for development and for testing against the live API.
 
 ## Docker image
 
@@ -128,10 +112,6 @@ ghcr.io/mbologna/reddit-rss-fetcher:<sha>
 The entrypoint (`run.sh`) selects the mode based on `MODE`:
 - `MODE=server` → `uvicorn server:app --host 0.0.0.0 --port 8080`
 - anything else → `python -u fetcher.py`
-
-## Kubernetes
-
-Base Kustomize manifests are in `deploy/k8s/`. The deployment uses a **sidecar pattern**: fetcher and nginx in the same pod sharing a PVC. See the manifests for details.
 
 ## Development
 

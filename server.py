@@ -98,7 +98,7 @@ def serve(path: str, token: str = ""):
     """Serve a feed file from GCS. Requires ?token=<SERVE_TOKEN>."""
     if not secrets.compare_digest(token.encode(), SERVE_TOKEN.encode()):
         raise HTTPException(status_code=401, detail="Invalid token")
-    # Map extension-less paths to .xml (mirrors the nginx try_files behaviour)
+    # Map extension-less paths to .xml (Feedly subscribes to reddit-front-page)
     filename = path.rsplit("/", 1)[-1]
     gcs_path = path if "." in filename else path + ".xml"
     content, ct = _read_blob(gcs_path)
