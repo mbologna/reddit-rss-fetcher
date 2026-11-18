@@ -25,8 +25,8 @@ ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN /usr/local/bin/python3 -m pip uninstall -y --root-user-action=ignore pip \
     && rm -rf /usr/local/lib/python3*/ensurepip
 WORKDIR /app
-# A fixed UID and GID (useradd -r alone picks a system GID), so volumes and
-# Kubernetes' runAsNonRoot see the same numbers on every build. The code is
+# A fixed UID and GID (useradd -r alone picks a system GID), so volumes see
+# the same numbers on every build. The code is
 # root-owned and read-only for the app user; only /output (local mode) is
 # writable.
 RUN groupadd -g 1000 appuser && useradd -r -u 1000 -g 1000 appuser \

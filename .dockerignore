@@ -5,6 +5,5 @@
 .gitlab-ci.yml
 CLAUDE.md
 docker-compose.yml
-deploy/
 output/
 .venv/
