@@ -16,7 +16,7 @@ Reddit is also closing its public Data API (new apps refused since 2026-10-31, t
 ## What it does
 
 - **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline
-- **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days)
+- **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days); each item links to its Reddit thread, with an `[archived copy]` link to the Markdown file
 - **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle
 - **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/last-run` is public
 
@@ -45,6 +45,7 @@ delete it and let Docker create it fresh) before starting.
 | `SUBREDDITS` | for archiver | Comma-separated list of subreddits to archive |
 | `REDDIT_TOTP_SECRET` | no | TOTP secret if the account has 2FA enabled (appended to the password as a one-time code) |
 | `BASE_URL` | for archiver | Public base URL for archived post links |
+| `SERVE_TOKEN` | with `server.py` | Appended to archived post links, which `server.py` serves only with the token |
 | `GCS_BUCKET` | for GCS mode | Bucket name (enables GCS mode: running `fetcher.py` directly does a single cycle and exits; on Cloud Run, `server.py` runs the cycle on `POST /fetch`) |
 | `OUTPUT_DIR` | for local mode | Output directory when GCS_BUCKET is not set (default: `/output`) |
 | `FETCH_INTERVAL_HOURS` | no | Fetch interval in hours (default: `12`, local mode only) |

@@ -21,9 +21,11 @@ def _make_mock_front_post(
 ):
     post = MagicMock()
     post.id = post_id
+    post.fullname = f"t3_{post_id}"
     post.title = title
     post.url = url
     post.permalink = permalink
+    post.selftext = "Body & more"
     post.selftext_html = selftext_html
     post.created_utc = created_utc
     post.author = author
@@ -80,19 +82,25 @@ def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
 def _make_mock_post(
     post_id="abc123",
     title="Test Post Title",
-    url="https://reddit.com/r/testsubreddit/comments/abc123",
     selftext="Post body content",
     created_utc=1700000000.0,
     author="testuser",
+    subreddit="testsubreddit",
 ):
-    mock_post = MagicMock()
-    mock_post.id = post_id
-    mock_post.title = title
-    mock_post.url = url
-    mock_post.selftext = selftext
-    mock_post.created_utc = created_utc
-    mock_post.author = author
-    return mock_post
+    """A self post: its url is its own thread."""
+    permalink = f"/r/{subreddit}/comments/{post_id}/test_post_title/"
+    post = _make_mock_front_post(
+        post_id=post_id,
+        title=title,
+        url=f"https://www.reddit.com{permalink}",
+        permalink=permalink,
+        selftext_html=f"<p>{selftext}</p>",
+        created_utc=created_utc,
+        author=author,
+        subreddit=subreddit,
+    )
+    post.selftext = selftext
+    return post
 
 
 def test_fetch_subreddit_writes_rss_and_markdown(tmp_path, monkeypatch):
@@ -117,6 +125,42 @@ def test_fetch_subreddit_writes_rss_and_markdown(tmp_path, monkeypatch):
     md = md_files[0].read_text()
     assert "Test Post Title" in md
     assert "Post body content" in md
+
+
+def test_fetch_subreddit_links_thread_and_tokenised_archive(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(fetcher, "BASE_URL", "https://example.com")
+    monkeypatch.setattr(fetcher, "SERVE_TOKEN", "s3cr&t")
+    mock_reddit = MagicMock()
+    mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
+
+    fetcher.fetch_subreddit(mock_reddit, "testsubreddit")
+
+    item = ET.parse(tmp_path / "testsubreddit.xml").find("./channel/item")
+    thread = "https://www.reddit.com/r/testsubreddit/comments/abc123/test_post_title/"
+    assert item.findtext("link") == thread
+    description = item.findtext("description")
+    (md,) = (tmp_path / "testsubreddit").glob("*.md")
+    archive = f"https://example.com/testsubreddit/{md.name}?token=s3cr%26t"
+    assert f'<a href="{archive}">[archived copy]</a>' in description
+    # A self post links its thread once, as [comments], not also as [link].
+    assert "[link]" not in description
+    assert f'<a href="{thread}">[comments]</a>' in description
+
+
+def test_fetch_subreddit_archive_link_without_token(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(fetcher, "BASE_URL", "https://example.com")
+    monkeypatch.setattr(fetcher, "SERVE_TOKEN", "")
+    mock_reddit = MagicMock()
+    mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
+
+    fetcher.fetch_subreddit(mock_reddit, "testsubreddit")
+
+    description = ET.parse(tmp_path / "testsubreddit.xml").findtext(
+        "./channel/item/description"
+    )
+    assert '.md">[archived copy]</a>' in description
 
 
 def test_fetch_subreddit_uses_correct_subreddit_name(tmp_path, monkeypatch):
