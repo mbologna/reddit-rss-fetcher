@@ -48,7 +48,7 @@ The package installs three console scripts:
 
 - `reddit-rss-fetcher`, the image's command: `MODE=server` runs `reddit-rss-server`, anything else runs `reddit-rss-fetch`.
 - `reddit-rss-fetch`: with `GCS_BUCKET` set, runs one cycle and exits; without it, writes to `OUTPUT_DIR` and repeats every `FETCH_INTERVAL_HOURS`.
-- `reddit-rss-server`: the FastAPI service, run by [Uvicorn](https://www.uvicorn.org/) on `0.0.0.0`, port `$PORT` (Cloud Run sets it; default `8080`).
+- `reddit-rss-server`: the FastAPI service, run by [Uvicorn](https://uvicorn.dev/) on `0.0.0.0`, port `$PORT` (Cloud Run sets it; default `8080`).
 
 `/app/run.sh`, the image's command before the code moved to `src/reddit_rss_fetcher/`, still works and runs `reddit-rss-fetcher`.
 
