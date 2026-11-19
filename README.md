@@ -36,7 +36,7 @@ docker compose up --build
 # feeds appear in ./output/
 ```
 
-[Docker Compose](https://docs.docker.com/compose/) builds the image and runs the fetcher in local mode, writing to `./output` every `FETCH_INTERVAL_HOURS`. `docker-compose.yml` passes only the variables it lists to the container: for an account with two-factor authentication, add `REDDIT_TOTP_SECRET` there. Nothing serves the files in local mode, and archived-copy links are `file://` paths unless `BASE_URL` is set.
+[Docker Compose](https://docs.docker.com/compose/) builds the image and runs the fetcher in local mode, writing to `./output` every `FETCH_INTERVAL_HOURS`. `docker-compose.yml` passes every fetcher variable in `.env` to the container except `GCS_BUCKET` (Compose runs local mode) and `OUTPUT_DIR` (fixed at `/output`, where `./output` is mounted). An unset or empty optional variable takes its default. Nothing serves the files in local mode, and archived-copy links are `file://` paths unless `BASE_URL` is set.
 
 The container runs as uid `1000`. If `./output` already exists with another owner, run `chown -R 1000:1000 output` (or delete it and let Docker create it) before starting.
 
