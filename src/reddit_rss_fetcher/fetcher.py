@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Reddit RSS fetcher and subreddit archiver.
 
@@ -37,9 +36,7 @@ OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
 
 # Subreddit archiver
-SUBREDDITS = [
-    s.strip() for s in os.environ.get("SUBREDDITS", "").split(",") if s.strip()
-]
+SUBREDDITS = [s.strip() for s in os.environ.get("SUBREDDITS", "").split(",") if s.strip()]
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
@@ -138,9 +135,7 @@ def _preview_image(preview) -> str | None:
     images = (preview or {}).get("images") or []
     if not images:
         return None
-    fitting = [
-        r for r in images[0].get("resolutions", []) if r["width"] <= MAX_IMAGE_WIDTH
-    ]
+    fitting = [r for r in images[0].get("resolutions", []) if r["width"] <= MAX_IMAGE_WIDTH]
     best = max(fitting, key=lambda r: r["width"]) if fitting else images[0]["source"]
     return best["url"]
 
@@ -169,9 +164,7 @@ def _media_sources(post) -> list:
 def _post_images(post) -> list[str]:
     """Gallery images, else the preview (image, video frame, link image)."""
     for source in _media_sources(post):
-        urls = _gallery_images(
-            _get(source, "gallery_data"), _get(source, "media_metadata")
-        )
+        urls = _gallery_images(_get(source, "gallery_data"), _get(source, "media_metadata"))
         if not urls:
             preview = _preview_image(_get(source, "preview"))
             urls = [preview] if preview else []
@@ -198,9 +191,7 @@ def _entry(post, archive_url: str = "") -> dict:
     links.append(("comments", permalink))
     if archive_url:
         links.append(("archived copy", archive_url))
-    footer = " ".join(
-        f'<a href="{html.escape(url)}">[{label}]</a>' for label, url in links
-    )
+    footer = " ".join(f'<a href="{html.escape(url)}">[{label}]</a>' for label, url in links)
 
     images = _post_images(post)
     body = [f'<p><img src="{html.escape(url)}" alt=""></p>' for url in images]
@@ -252,8 +243,7 @@ def _load_front_page_state() -> dict:
         return {
             pid: p
             for pid, p in posts.items()
-            if isinstance(p, dict)
-            and all(k in p for k in (*ENTRY_KEYS, "first_seen", "rank"))
+            if isinstance(p, dict) and all(k in p for k in (*ENTRY_KEYS, "first_seen", "rank"))
         }
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         log.warning("Ignoring unreadable %s: %s", FRONT_PAGE_STATE, e)
@@ -333,10 +323,8 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
         f"https://www.reddit.com/r/{subreddit_name}/",
     )
 
-    for post in reddit.subreddit(subreddit_name).top(
-        time_filter=TOP_PERIOD, limit=TOP_LIMIT
-    ):
-        url_hashed = hashlib.md5(post.url.encode("utf-8")).hexdigest()
+    for post in reddit.subreddit(subreddit_name).top(time_filter=TOP_PERIOD, limit=TOP_LIMIT):
+        url_hashed = hashlib.md5(post.url.encode("utf-8")).hexdigest()  # nosec B324: a file name, not a security hash
         md_rel_path = f"{subreddit_name}/{url_hashed}.md"
         dt_utc = datetime.fromtimestamp(post.created_utc, tz=UTC)
         created = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
@@ -368,19 +356,14 @@ def _prune_archives(subreddit_name: str) -> None:
     else:
         archive_dir = os.path.join(OUTPUT_DIR, subreddit_name)
         for article in glob.glob(os.path.join(archive_dir, "*.md")):
-            age = (
-                datetime.now(tz=UTC)
-                - datetime.fromtimestamp(os.stat(article).st_ctime, tz=UTC)
-            ).days
+            age = (datetime.now(tz=UTC) - datetime.fromtimestamp(os.stat(article).st_ctime, tz=UTC)).days
             if age >= ARCHIVE_DAYS:
                 os.remove(article)
                 log.info("Pruned %s", article)
 
 
 def has_credentials() -> bool:
-    return all(
-        [REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD]
-    )
+    return all([REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD])
 
 
 def fetch_subreddits(reddit: praw.Reddit) -> None:
@@ -428,7 +411,8 @@ def run_all() -> bool:
     return True
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console script reddit-rss-fetch: one cycle in GCS mode, a loop otherwise."""
     if GCS_BUCKET:
         log.info("GCS_BUCKET=%s, running a single cycle", GCS_BUCKET)
         run_all()

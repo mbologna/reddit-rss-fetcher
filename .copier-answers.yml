@@ -1,0 +1,18 @@
+# Copier's record of this project's template answers. Don't edit by hand:
+# `copier update` (or Renovate's copier manager) reads it to apply
+# template changes.
+_commit: v1.1.3
+_src_path: https://github.com/mbologna/python-app-template.git
+author: Michele Bologna
+base_variant: slim
+coverage_fail_under: 99
+description: 'Self-hosted Reddit RSS fetcher and subreddit archiver: authenticated
+    feeds and Markdown exports behind a token-protected FastAPI proxy, on Cloud Run
+    or Kubernetes'
+forge: github
+notifications: false
+package_name: reddit_rss_fetcher
+project_name: reddit-rss-fetcher
+sample_code: false
+smoke_cmd: python -c 'import reddit_rss_fetcher.fetcher' && GCS_BUCKET= SERVE_TOKEN=
+    python -c 'import reddit_rss_fetcher.server, uvicorn'

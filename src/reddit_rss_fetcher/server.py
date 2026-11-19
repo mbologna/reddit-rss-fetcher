@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 HTTP server for the reddit-rss-fetcher output.
 
@@ -9,7 +8,7 @@ POST /fetch runs a fetch cycle with its own token, FETCH_TOKEN, so whatever
 triggers fetches can't read the feeds; 500 if a step failed.
 
 Usage:
-    SERVE_TOKEN=<secret> GCS_BUCKET=reddit.michelebologna.net uvicorn server:app --host 0.0.0.0 --port 8080
+    SERVE_TOKEN=<secret> GCS_BUCKET=<bucket> reddit-rss-server
 """
 
 import os
@@ -52,7 +51,7 @@ def _read_blob(path: str) -> tuple[bytes, str]:
         ct = blob.content_type or "application/octet-stream"
         return content, ct
     except NotFound:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail="Not found") from None
 
 
 class FetchRequest(BaseModel):
@@ -63,15 +62,13 @@ class FetchRequest(BaseModel):
 def trigger_fetch(req: FetchRequest):
     """Trigger a new fetch cycle. Requires FETCH_TOKEN."""
     if not FETCH_TOKEN:
-        raise HTTPException(
-            status_code=503, detail="Fetch disabled: FETCH_TOKEN is not set"
-        )
+        raise HTTPException(status_code=503, detail="Fetch disabled: FETCH_TOKEN is not set")
     if not secrets.compare_digest(req.token.encode(), FETCH_TOKEN.encode()):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if not _fetch_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Fetch already in progress")
     try:
-        from fetcher import run_all
+        from reddit_rss_fetcher.fetcher import run_all
 
         ok = run_all()
     finally:
@@ -108,7 +105,7 @@ def health():
 
 
 @app.get("/{path:path}")
-def serve(path: str, token: str = ""):
+def serve(path: str, token: str = ""):  # nosec B107: no token is a 401, not a default password
     """Serve a feed file from GCS. Requires ?token=<SERVE_TOKEN>."""
     if not secrets.compare_digest(token.encode(), SERVE_TOKEN.encode()):
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -117,3 +114,10 @@ def serve(path: str, token: str = ""):
     gcs_path = path if "." in filename else path + ".xml"
     content, ct = _read_blob(gcs_path)
     return Response(content=content, media_type=ct)
+
+
+def main() -> None:
+    """Console script reddit-rss-server: uvicorn on $PORT (Cloud Run sets it), default 8080."""
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # nosec B104: a container port, reached through the Service

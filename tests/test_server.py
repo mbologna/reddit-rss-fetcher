@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from google.cloud.exceptions import NotFound
 
-import server
+from reddit_rss_fetcher import server
 
 client = TestClient(server.app)
 
@@ -161,7 +161,7 @@ def test_fetch_rejects_invalid_token():
 
 
 def test_fetch_triggers_run_all_with_valid_token():
-    with patch("fetcher.run_all", return_value=True) as mock_run_all:
+    with patch("reddit_rss_fetcher.fetcher.run_all", return_value=True) as mock_run_all:
         resp = client.post("/fetch", json={"token": server.FETCH_TOKEN})
 
     assert resp.status_code == 200
@@ -169,7 +169,7 @@ def test_fetch_triggers_run_all_with_valid_token():
 
 
 def test_fetch_returns_500_when_a_step_failed():
-    with patch("fetcher.run_all", return_value=False):
+    with patch("reddit_rss_fetcher.fetcher.run_all", return_value=False):
         resp = client.post("/fetch", json={"token": server.FETCH_TOKEN})
 
     assert resp.status_code == 500
