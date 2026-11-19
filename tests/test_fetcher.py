@@ -1,3 +1,4 @@
+import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -88,6 +89,106 @@ def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
         fetcher.fetch_front_page(mock_reddit)
 
     assert not (tmp_path / "reddit-front-page.xml").exists()
+
+
+# ── front page history ────────────────────────────────────────────────────────
+
+HOUR = 3600
+
+
+def _run_front(tmp_path, monkeypatch, now, *posts):
+    """One fetch at time now; returns the items' guids and the saved state."""
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(fetcher.time, "time", lambda: now)
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = list(posts)
+    fetcher.fetch_front_page(mock_reddit)
+    items = ET.parse(tmp_path / "reddit-front-page.xml").findall("./channel/item")
+    state = json.loads((tmp_path / fetcher.FRONT_PAGE_STATE).read_text())
+    return [i.findtext("guid") for i in items], state
+
+
+def test_front_page_keeps_posts_that_left_the_hot_list(tmp_path, monkeypatch):
+    t = 1_800_000_000
+    a, b, c = (_make_mock_front_post(post_id=x, title=x) for x in "abc")
+    guids, _ = _run_front(tmp_path, monkeypatch, t, a, b)
+    assert guids == ["t3_a", "t3_b"]
+    # Two hours later b has dropped off the hot list and c is new.
+    guids, state = _run_front(tmp_path, monkeypatch, t + 2 * HOUR, c, a)
+    assert guids == ["t3_c", "t3_a", "t3_b"]
+    assert state["posts"]["t3_a"]["first_seen"] == t
+    assert state["posts"]["t3_c"]["first_seen"] == t + 2 * HOUR
+
+
+def test_front_page_dates_items_by_first_listing_and_refreshes_them(
+    tmp_path, monkeypatch
+):
+    t = 1_800_000_000
+    post = _make_mock_front_post(
+        post_id="a", title="Old title", created_utc=1_700_000_000.0
+    )
+    _run_front(tmp_path, monkeypatch, t, post)
+    post.title = "New title"
+    _run_front(tmp_path, monkeypatch, t + HOUR, post)
+    item = ET.parse(tmp_path / "reddit-front-page.xml").find("./channel/item")
+    assert item.findtext("title") == "New title"
+    assert (
+        item.findtext("pubDate") == "Fri, 15 Jan 2027 08:00:00 +0000"
+    )  # t, not the post's own date
+
+
+def test_front_page_forgets_posts_after_keep_hours(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "FRONT_PAGE_KEEP_HOURS", 3)
+    t = 1_800_000_000
+    a, b = (_make_mock_front_post(post_id=x) for x in "ab")
+    _run_front(tmp_path, monkeypatch, t, a)
+    guids, state = _run_front(tmp_path, monkeypatch, t + 4 * HOUR, b)
+    assert guids == ["t3_b"]
+    assert list(state["posts"]) == ["t3_b"]
+    # A post still on the hot list stays however long ago it first appeared.
+    guids, _ = _run_front(tmp_path, monkeypatch, t + 9 * HOUR, b)
+    assert guids == ["t3_b"]
+
+
+def test_front_page_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "FRONT_PAGE_MAX_ITEMS", 2)
+    t = 1_800_000_000
+    _run_front(tmp_path, monkeypatch, t, _make_mock_front_post(post_id="old"))
+    guids, _ = _run_front(
+        tmp_path,
+        monkeypatch,
+        t + HOUR,
+        *(_make_mock_front_post(post_id=x) for x in "xy"),
+    )
+    assert guids == ["t3_x", "t3_y"]
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "not json",
+        "[]",
+        '{"posts": 3}',
+        '{"posts": {"t3_z": {"title": "missing fields"}}}',
+    ],
+)
+def test_front_page_ignores_an_unreadable_state(tmp_path, monkeypatch, state):
+    (tmp_path / fetcher.FRONT_PAGE_STATE).write_text(state)
+    guids, saved = _run_front(
+        tmp_path, monkeypatch, 1_800_000_000, _make_mock_front_post(post_id="a")
+    )
+    assert guids == ["t3_a"]
+    assert list(saved["posts"]) == ["t3_a"]
+
+
+def test_read_file_from_gcs(fake_bucket):
+    from google.api_core.exceptions import NotFound
+
+    blob = fake_bucket.blob.return_value
+    blob.download_as_bytes.return_value = b"{}"
+    assert fetcher.read_file("state.json") == b"{}"
+    blob.download_as_bytes.side_effect = NotFound("gone")
+    assert fetcher.read_file("state.json") is None
 
 
 # ── images in items ───────────────────────────────────────────────────────────
