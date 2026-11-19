@@ -115,11 +115,10 @@ CI publishes the image to the GitHub Container Registry for `linux/amd64` and `l
 
 ```
 ghcr.io/mbologna/reddit-rss-fetcher:latest
-ghcr.io/mbologna/reddit-rss-fetcher:main
 ghcr.io/mbologna/reddit-rss-fetcher:sha-<commit>
 ```
 
-The same run deploys the `sha-<commit>` image to the Cloud Run service. There are no releases or version tags, and no copy on Docker Hub.
+The same run deploys that image to the Cloud Run service by its digest; the `sha-<commit>` tags of the last five versions are the rollback window. There are no releases or version tags, and no copy on Docker Hub.
 
 The image runs as uid `1000`, has no pip, and writes only to `/tmp` and `/output`, so its root filesystem can be read-only.
 
