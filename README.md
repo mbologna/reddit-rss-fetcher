@@ -3,128 +3,137 @@
 [![CI](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml)
 [MIT licensed](LICENSE).
 
-A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Service, triggered by any cron that can POST: mine is a Cloudflare Worker's Cron Trigger, every 2 hours), and serves them through a token-authenticated FastAPI proxy. A local mode writes to disk instead, for development.
+reddit-rss-fetcher builds [RSS](https://en.wikipedia.org/wiki/RSS) feeds of your [Reddit](https://www.reddit.com/) front page and of chosen subreddits, and archives each subreddit post as a [Markdown](https://en.wikipedia.org/wiki/Markdown) file. In production it writes the files to a [Google Cloud Storage](https://cloud.google.com/storage) bucket and serves them from a [FastAPI](https://fastapi.tiangolo.com/) service on [Cloud Run](https://cloud.google.com/run) that requires a token. Without a bucket it writes to a local directory, for development.
 
-## Why this exists
+## Why it exists
 
-Reddit used to provide a personal RSS feed of your front page (`reddit.com/.rss?feed=TOKEN&user=USERNAME`), but added directly to a feed reader like Feedly it lagged by hours, between Reddit throttling aggregators and Feedly's own polling intervals. On 2026-11-13 Reddit stopped serving RSS altogether.
+Reddit used to publish a private RSS feed of each user's front page (`reddit.com/.rss?feed=TOKEN&user=USERNAME`). Added to a feed reader such as [Feedly](https://feedly.com/), it lagged by hours, between Reddit throttling aggregators and Feedly's own polling interval. On 2026-11-13 Reddit stopped serving RSS altogether.
 
-This project self-hosts the fetch: a small Python process runs on a configurable schedule, reads your front page and subreddits through the Reddit API, and writes static RSS files. Your feed reader subscribes to your own URL, which always reflects the latest fetch.
+This project reads the front page and subreddits through the Reddit API with [PRAW](https://praw.readthedocs.io/) and writes static RSS files, so the feed reader subscribes to a URL you control. Reddit is also closing its public Data API: it has refused new apps since 2026-10-31 and shuts off the rest by March 2027. The project stops working then.
 
-Reddit is also closing its public Data API (new apps refused since 2026-10-31, the rest shut off by March 2027); once that happens this project stops working.
+## What it writes
 
-## What it does
+- `reddit-front-page.xml`, the hot posts of the account's front page, with the subreddit as each item's byline. The feed keeps every post it listed in the last `FRONT_PAGE_KEEP_HOURS` (48 by default), up to 150 items, dated by when the post first appeared in the feed. A reader that was offline between two fetches still gets posts that came and went. `front-page-state.json` records those posts between runs.
+- `{subreddit}.xml` for each subreddit in `SUBREDDITS`: its top posts for `TOP_PERIOD`. Each item links to the Reddit thread and to an `[archived copy]`, `{subreddit}/{hash}.md`, holding the title, date, author, URL and self text. Archived files older than `ARCHIVE_DAYS` are deleted.
+- Each item shows the post's images above its text: a gallery's first 20 images in order, a video's preview frame with a link to the video, or a link's preview image. Images use Reddit's rendition at most 1,080 px wide, and the first is also the item's `media:thumbnail`.
+- `last-run`, a UTC ISO 8601 timestamp, written only after a cycle in which no step failed. A failed step does not stop the others.
 
-- **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline. The feed keeps every post it listed in the last 48 hours (`front-page-state.json` in the bucket), dated by when it first appeared, so a reader that was offline between two fetches still gets the posts that came and went
-- **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days); each item links to its Reddit thread, with an `[archived copy]` link to the Markdown file
-- **Rich items:** every item carries the post's images (a gallery's in order, a video's preview frame with a link to it, a link's preview image, scaled to at most 1080 px wide; also as `media:thumbnail`) above its text
-- **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle in which no step failed; `GET /health` answers `{"status":"ok","last_run":…}`, or 503 with `{"status":"down","problems":[…]}` once it is older than `STALE_AFTER_HOURS` (or missing)
-- **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/health` is public
+```
+output/
+  reddit-front-page.xml      front page feed
+  reddit-front-page          extension-less copy, for Feedly
+  front-page-state.json      posts in the front page feed and when each first appeared
+  {subreddit}.xml            top posts feed
+  {subreddit}/{hash}.md      archived post
+  last-run                   time of the last cycle with no failed step
+```
 
 ## Quick start
 
 ```bash
-cp .env.example .env   # fill in credentials
+cp .env.example .env   # fill in the Reddit credentials and SUBREDDITS
 docker compose up --build
-# feeds written to ./output/
+# feeds appear in ./output/
 ```
 
-The container runs as a non-root user (uid `1000`). If `./output` already
-exists with different ownership, fix it with `chown -R 1000:1000 output` (or
-delete it and let Docker create it fresh) before starting.
+[Docker Compose](https://docs.docker.com/compose/) builds the image and runs the fetcher in local mode, writing to `./output` every `FETCH_INTERVAL_HOURS`. `docker-compose.yml` passes only the variables it lists to the container: for an account with two-factor authentication, add `REDDIT_TOTP_SECRET` there. Nothing serves the files in local mode, and archived-copy links are `file://` paths unless `BASE_URL` is set.
 
-## Environment variables
+The container runs as uid `1000`. If `./output` already exists with another owner, run `chown -R 1000:1000 output` (or delete it and let Docker create it) before starting.
 
-### Fetcher (`fetcher.py`)
+To get a client ID and secret, create a "script" app at <https://www.reddit.com/prefs/apps>.
+
+## Commands
+
+The package installs three console scripts:
+
+- `reddit-rss-fetcher`, the image's command: `MODE=server` runs `reddit-rss-server`, anything else runs `reddit-rss-fetch`.
+- `reddit-rss-fetch`: with `GCS_BUCKET` set, runs one cycle and exits; without it, writes to `OUTPUT_DIR` and repeats every `FETCH_INTERVAL_HOURS`.
+- `reddit-rss-server`: the FastAPI service, run by [Uvicorn](https://www.uvicorn.org/) on `0.0.0.0`, port `$PORT` (Cloud Run sets it; default `8080`).
+
+`/app/run.sh`, the image's command before the code moved to `src/reddit_rss_fetcher/`, still works and runs `reddit-rss-fetcher`.
+
+## Configuration
+
+### Fetcher
 
 | Variable | Required | Description |
 |---|---|---|
-| `REDDIT_CLIENT_ID` | yes | PRAW OAuth client ID |
-| `REDDIT_CLIENT_SECRET` | yes | PRAW OAuth client secret |
-| `REDDIT_USERNAME` | yes | Reddit username for PRAW auth (its front page is the feed) |
-| `REDDIT_PASSWORD` | yes | Reddit password for PRAW auth |
-| `SUBREDDITS` | for archiver | Comma-separated list of subreddits to archive |
-| `REDDIT_TOTP_SECRET` | no | TOTP secret if the account has 2FA enabled (appended to the password as a one-time code) |
-| `BASE_URL` | for archiver | Public base URL for archived post links |
-| `SERVE_TOKEN` | with `server.py` | Appended to archived post links, which `server.py` serves only with the token |
-| `GCS_BUCKET` | for GCS mode | Bucket name (enables GCS mode: running the fetcher directly (`reddit-rss-fetch`) does a single cycle and exits; on Cloud Run, `server.py` runs the cycle on `POST /fetch`) |
-| `OUTPUT_DIR` | for local mode | Output directory when GCS_BUCKET is not set (default: `/output`) |
-| `FETCH_INTERVAL_HOURS` | no | Fetch interval in hours (default: `12`, local mode only) |
-| `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |
-| `TOP_PERIOD` | no | Period for top posts: `hour`, `day`, `week`, `month`, `year`, `all` (default: `week`) |
-| `TOP_LIMIT` | no | Number of top posts per subreddit (default: `25`) |
-| `FRONT_PAGE_LIMIT` | no | Hot posts read from the front page on each fetch (default: `25`) |
-| `FRONT_PAGE_KEEP_HOURS` | no | Hours a front-page post stays in the feed after it first appeared (default: `48`); a post still on the hot list always stays |
+| `REDDIT_CLIENT_ID` | yes | OAuth client ID of the Reddit script app |
+| `REDDIT_CLIENT_SECRET` | yes | OAuth client secret |
+| `REDDIT_USERNAME` | yes | Reddit account; its front page is the feed |
+| `REDDIT_PASSWORD` | yes | Password of that account |
+| `REDDIT_TOTP_SECRET` | no | TOTP secret (not a one-time code) if the account has two-factor authentication; the fetcher appends the current code to the password |
+| `SUBREDDITS` | for the archiver | Comma-separated subreddits to archive; unset, the archiver is skipped |
+| `BASE_URL` | for the archiver | Public base URL of the server, used in archived-copy links |
+| `SERVE_TOKEN` | with the server | Appended to archived-copy links, because the server serves the archive only with the token |
+| `GCS_BUCKET` | for GCS mode | Bucket to write to. Set, `reddit-rss-fetch` runs one cycle and exits |
+| `OUTPUT_DIR` | no | Output directory without `GCS_BUCKET` (default `/output`) |
+| `FETCH_INTERVAL_HOURS` | no | Hours between cycles without `GCS_BUCKET` (default `12`) |
+| `ARCHIVE_DAYS` | no | Days to keep archived Markdown files (default `30`) |
+| `TOP_PERIOD` | no | Period for top posts: `hour`, `day`, `week`, `month`, `year` or `all` (default `week`) |
+| `TOP_LIMIT` | no | Top posts per subreddit (default `25`) |
+| `FRONT_PAGE_LIMIT` | no | Hot posts read from the front page on each fetch (default `25`) |
+| `FRONT_PAGE_KEEP_HOURS` | no | Hours a front-page post stays in the feed after it first appeared (default `48`); a post still on the hot list always stays |
 
-To get a Reddit OAuth client ID and secret, create a "script" app at <https://www.reddit.com/prefs/apps>.
-
-### Server (`server.py`)
+### Server
 
 | Variable | Required | Description |
 |---|---|---|
-| `GCS_BUCKET` | yes | GCS bucket containing the fetched files |
-| `SERVE_TOKEN` | yes | Token required on `?token=` query parameter for feed endpoints |
-| `FETCH_TOKEN` | for `/fetch` | Token required by `POST /fetch`. Separate from `SERVE_TOKEN`, so whatever triggers fetches can't read the feeds; unset, `/fetch` answers 503 |
-| `STALE_AFTER_HOURS` | no | Age of `last-run` at which `/health` returns 503 (default: `7`, three missed 2-hour cycles) |
+| `MODE` | for the image's command | `server` makes `reddit-rss-fetcher` start the server |
+| `GCS_BUCKET` | yes | Bucket holding the fetched files |
+| `SERVE_TOKEN` | yes | Token required in the `?token=` query parameter of every file |
+| `FETCH_TOKEN` | for `/fetch` | Token required by `POST /fetch`. It is separate from `SERVE_TOKEN`, so whatever triggers fetches cannot read the feeds; unset, `/fetch` answers 503 |
+| `STALE_AFTER_HOURS` | no | Age of `last-run` at which `/health` answers 503 (default `7`: three missed two-hour cycles) |
+| `PORT` | no | Listening port (default `8080`) |
 
-Set `MODE=server` to start the server instead of the fetcher (the image's command, `reddit-rss-fetcher`, reads this). The server listens on `PORT` (Cloud Run sets it), default `8080`.
+`POST /fetch` runs the fetcher in the server process, so the server also needs the fetcher's variables.
 
-## Output structure
+## The server
 
-```
-output/
-  reddit-front-page.xml       — front page feed (hot posts)
-  reddit-front-page           — extension-less copy (for Feedly)
-  {subreddit}.xml             — top posts RSS feed
-  {subreddit}/{hash}.md       — archived post (title, author, URL, selftext)
-  last-run                    — UTC timestamp of last successful cycle
-```
-
-## Serving
-
-### Cloud Run (GCP)
-
-A single Cloud Run Service (`MODE=server`) handles both serving and fetching:
-
-- **Feed serving**: reads from a private GCS bucket and serves files with token auth (always running, cpu_idle=true for always-free tier)
-- **Fetch trigger**: `POST /fetch` with `{"token": "<FETCH_TOKEN>"}` runs a full fetch cycle synchronously and writes results to the GCS bucket, answering 500 if any step failed (409 if a cycle is already running); a Cloudflare Worker's Cron Trigger calls this every 2 hours
+A single Cloud Run service with `MODE=server` serves the feeds and runs the fetches:
 
 ```
-POST /fetch                             — trigger fetch (body: {"token": "FETCH_TOKEN"})
-GET  /health                           — 200, no auth (health check); 503 when stale
-GET  /reddit-front-page?token=TOKEN     — 200, XML feed
-GET  /reddit-front-page.xml?token=TOKEN — same
-GET  /reddit-front-page                 — 401 (missing token)
+POST /fetch                                run a fetch cycle (body: {"token": "FETCH_TOKEN"})
+GET  /health                               no token; 200, or 503 when last-run is stale or missing
+GET  /reddit-front-page?token=TOKEN        the front page feed
+GET  /reddit-front-page.xml?token=TOKEN    the same
+GET  /{subreddit}/{hash}.md?token=TOKEN    an archived post
+GET  /reddit-front-page                    401, no token
 ```
 
-The Cloud Run service, its bucket and IAM are managed with OpenTofu in a separate, private repository.
+Any path is read from the bucket, and a path whose last segment has no extension gets `.xml` appended. A missing file answers 404.
 
-### Locally
+`POST /fetch` runs a full cycle synchronously. It answers 200 when every step succeeded, 500 when one failed, 409 when a cycle is already running and 401 for a wrong token. Any scheduler that can send a POST can trigger it; mine is a [Cloudflare Workers Cron Trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/) every two hours.
 
-Without `GCS_BUCKET`, the fetcher writes to `OUTPUT_DIR` and repeats every `FETCH_INTERVAL_HOURS` (see [Quick start](#quick-start)). Nothing serves the files in that mode, and archived post links are `file://` paths unless `BASE_URL` is set: it is meant for development and for testing against the live API.
+`/health` answers `GET` and `HEAD` with `{"status":"ok","last_run":"…"}`, or with 503 and `{"status":"down","problems":[…]}` once `last-run` is older than `STALE_AFTER_HOURS` or absent.
+
+The Cloud Run service, its bucket and IAM are managed with [OpenTofu](https://opentofu.org/) in a separate, private repository.
 
 ## Docker image
 
-Pre-built images are published to the GitHub Container Registry on every push to `main`:
+CI publishes the image to the GitHub Container Registry for `linux/amd64` and `linux/arm64` on every push to `main` that changes it:
 
 ```
 ghcr.io/mbologna/reddit-rss-fetcher:latest
+ghcr.io/mbologna/reddit-rss-fetcher:main
 ghcr.io/mbologna/reddit-rss-fetcher:sha-<commit>
 ```
 
-The image's command, `reddit-rss-fetcher`, selects the mode based on `MODE`:
-- `MODE=server` → `reddit-rss-server`: uvicorn on `0.0.0.0`, port `$PORT` (default `8080`)
-- anything else → `reddit-rss-fetch`
+The same run deploys the `sha-<commit>` image to the Cloud Run service. There are no releases or version tags, and no copy on Docker Hub.
 
-`/app/run.sh`, the command before the code moved to `src/reddit_rss_fetcher/`, still works and runs `reddit-rss-fetcher`.
+The image runs as uid `1000`, has no pip, and writes only to `/tmp` and `/output`, so its root filesystem can be read-only.
 
 ## Development
 
 ```bash
 uv sync
-uv run pytest tests/ -v
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
+uv run pre-commit install
 ```
 
-Linting: `uv run ruff check . && uv run ruff format --check .`
+The project uses [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/) and [pytest](https://docs.pytest.org/); tests mock PRAW and the bucket. CI fails when coverage drops below `fail_under` in `pyproject.toml`, now 99%. The [pre-commit](https://pre-commit.com/) hooks also run [mypy](https://mypy-lang.org/), [Bandit](https://bandit.readthedocs.io/) and [hadolint](https://github.com/hadolint/hadolint).
 
-Dependencies resolve only to releases at least 7 days old (`exclude-newer` in `pyproject.toml`), and the Docker image installs exactly what `uv.lock` pins. To take a CVE fix released less than 7 days ago, add a temporary `exclude-newer-package = { <package> = false }` override under `[tool.uv]`, run `uv lock --upgrade-package <package>`, and drop the override once the release is a week old.
+Dependencies resolve only to releases at least 7 days old (`exclude-newer` in `pyproject.toml`), and the image installs exactly what `uv.lock` pins. To take a CVE fix released less than 7 days ago, add a temporary `exclude-newer-package = { <package> = false }` override under `[tool.uv]`, run `uv lock --upgrade-package <package>`, and drop the override once the release is a week old.
+
+The project skeleton comes from the [Copier](https://copier.readthedocs.io/) template [python-app-template](https://github.com/mbologna/python-app-template), recorded in `.copier-answers.yml`. [Renovate](https://docs.renovatebot.com/) opens a pull request for each template release; `uvx copier update` applies one by hand.
