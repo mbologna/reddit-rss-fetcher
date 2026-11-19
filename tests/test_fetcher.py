@@ -1,5 +1,7 @@
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,19 +20,31 @@ def _make_mock_front_post(
     created_utc=1700000000.0,
     author="poster",
     subreddit="python",
+    **media,
 ):
-    post = MagicMock()
-    post.id = post_id
-    post.fullname = f"t3_{post_id}"
-    post.title = title
-    post.url = url
-    post.permalink = permalink
-    post.selftext = "Body & more"
-    post.selftext_html = selftext_html
-    post.created_utc = created_utc
-    post.author = author
-    post.subreddit.display_name = subreddit
-    return post
+    """A Submission stand-in. A namespace, not a MagicMock: a MagicMock would
+    invent every media attribute (preview, gallery_data, ...) as truthy."""
+    fields = {
+        "preview": None,
+        "gallery_data": None,
+        "media_metadata": None,
+        "crosspost_parent_list": None,
+        "is_video": False,
+    }
+    fields.update(media)
+    return SimpleNamespace(
+        id=post_id,
+        fullname=f"t3_{post_id}",
+        title=title,
+        url=url,
+        permalink=permalink,
+        selftext="Body & more",
+        selftext_html=selftext_html,
+        created_utc=created_utc,
+        author=author,
+        subreddit=SimpleNamespace(display_name=subreddit),
+        **fields,
+    )
 
 
 def test_fetch_front_page_writes_rss_from_api(tmp_path, monkeypatch):
@@ -74,6 +88,153 @@ def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
         fetcher.fetch_front_page(mock_reddit)
 
     assert not (tmp_path / "reddit-front-page.xml").exists()
+
+
+# ── images in items ───────────────────────────────────────────────────────────
+
+MEDIA = "{http://search.yahoo.com/mrss/}thumbnail"
+
+
+def _preview(source, *widths):
+    """A preview block: the original plus one rendition per width."""
+    return {
+        "images": [
+            {
+                "source": {"url": source, "width": 4000, "height": 3000},
+                "resolutions": [
+                    {
+                        "url": f"https://preview.redd.it/a.jpg?width={w}&amp;s=x",
+                        "width": w,
+                        "height": w,
+                    }
+                    for w in widths
+                ],
+            }
+        ]
+    }
+
+
+def _front_item(tmp_path, monkeypatch, post):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [post]
+    fetcher.fetch_front_page(mock_reddit)
+    return ET.parse(tmp_path / "reddit-front-page.xml").find("./channel/item")
+
+
+def test_image_post_shows_the_widest_fitting_rendition(tmp_path, monkeypatch):
+    post = _make_mock_front_post(
+        url="https://i.redd.it/abc.jpeg",
+        selftext_html="<p>caption</p>",
+        preview=_preview("https://i.redd.it/abc.jpeg", 320, 1080, 2160),
+    )
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    url = "https://preview.redd.it/a.jpg?width=1080&s=x"  # unescaped
+    description = item.findtext("description")
+    assert description.startswith(f'<p><img src="{url.replace("&", "&amp;")}"')
+    assert "<p>caption</p>" in description  # the text follows the image
+    assert item.find(MEDIA).get("url") == url
+
+
+def test_preview_without_fitting_rendition_uses_the_original(tmp_path, monkeypatch):
+    post = _make_mock_front_post(preview=_preview("https://i.redd.it/o.png", 2160))
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    assert item.find(MEDIA).get("url") == "https://i.redd.it/o.png"
+
+
+def _gallery(*entries):
+    """gallery_data and media_metadata for (media_id, metadata) pairs."""
+    return {
+        "gallery_data": {"items": [{"media_id": mid} for mid, _ in entries]},
+        "media_metadata": dict(entries),
+    }
+
+
+def _still(name):
+    return {
+        "status": "valid",
+        "e": "Image",
+        "s": {"u": f"https://preview.redd.it/{name}.jpg?full", "x": 4000},
+        "p": [
+            {"u": f"https://preview.redd.it/{name}.jpg?w=640&amp;s=1", "x": 640},
+            {"u": f"https://preview.redd.it/{name}.jpg?w=1080&amp;s=1", "x": 1080},
+        ],
+    }
+
+
+def test_gallery_shows_every_valid_image_in_order(tmp_path, monkeypatch):
+    animated = {
+        "status": "valid",
+        "e": "AnimatedImage",
+        "s": {"gif": "https://i.redd.it/c.gif", "mp4": "https://i.redd.it/c.mp4"},
+    }
+    post = _make_mock_front_post(
+        url="https://www.reddit.com/gallery/xyz789",
+        **_gallery(
+            ("b", _still("b")),
+            ("gone", {"status": "failed"}),
+            ("a", _still("a")),
+            ("c", animated),
+        ),
+    )
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    srcs = re.findall(r'<img src="([^"]+)"', item.findtext("description"))
+    assert srcs == [
+        "https://preview.redd.it/b.jpg?w=1080&amp;s=1",
+        "https://preview.redd.it/a.jpg?w=1080&amp;s=1",
+        "https://i.redd.it/c.gif",
+    ]
+    assert item.find(MEDIA).get("url") == "https://preview.redd.it/b.jpg?w=1080&s=1"
+
+
+def test_gallery_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "GALLERY_LIMIT", 2)
+    post = _make_mock_front_post(**_gallery(*[(n, _still(n)) for n in ("a", "b", "c")]))
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    assert item.findtext("description").count("<img ") == 2
+
+
+def test_crosspost_takes_media_from_the_original(tmp_path, monkeypatch):
+    post = _make_mock_front_post(
+        crosspost_parent_list=[_gallery(("a", _still("a")))],
+    )
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    assert "preview.redd.it/a.jpg" in item.findtext("description")
+
+
+def test_video_shows_its_frame_and_a_link(tmp_path, monkeypatch):
+    post = _make_mock_front_post(
+        url="https://v.redd.it/vid",
+        is_video=True,
+        preview=_preview("https://external-preview.redd.it/frame.jpg"),
+    )
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    description = item.findtext("description")
+    assert "frame.jpg" in description
+    thread = "https://www.reddit.com/r/python/comments/xyz789/front_page_post/"
+    assert f'<p><a href="{thread}">▶ Video on Reddit</a></p>' in description
+
+
+def test_post_without_media_has_no_image(tmp_path, monkeypatch):
+    post = _make_mock_front_post(url="https://en.wikipedia.org/wiki/X")
+
+    item = _front_item(tmp_path, monkeypatch, post)
+
+    assert "<img " not in item.findtext("description")
+    assert "Video on Reddit" not in item.findtext("description")
+    assert item.find(MEDIA) is None
 
 
 # ── fetch_subreddit ───────────────────────────────────────────────────────────

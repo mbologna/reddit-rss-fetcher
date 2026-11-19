@@ -17,6 +17,7 @@ Reddit is also closing its public Data API (new apps refused since 2026-10-31, t
 
 - **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline
 - **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days); each item links to its Reddit thread, with an `[archived copy]` link to the Markdown file
+- **Rich items:** every item carries the post's images (a gallery's in order, a video's preview frame with a link to it, a link's preview image, scaled to at most 1080 px wide; also as `media:thumbnail`) above its text
 - **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle in which no step failed; `GET /last-run` turns 503 once it is older than `STALE_AFTER_HOURS`
 - **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/last-run` is public
 
