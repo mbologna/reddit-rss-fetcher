@@ -3,7 +3,7 @@
 [![CI](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/mbologna/reddit-rss-fetcher/actions/workflows/ci.yml)
 [MIT licensed](LICENSE).
 
-A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Service, triggered by Cloud Scheduler), and serves them through a token-authenticated FastAPI proxy. A local mode writes to disk instead, for development.
+A self-hosted Reddit RSS fetcher and subreddit archiver. Runs on a configurable schedule, writes static XML/Markdown files to a GCS bucket (Cloud Run Service, triggered by any cron that can POST: mine is a Cloudflare Worker's Cron Trigger, every 2 hours), and serves them through a token-authenticated FastAPI proxy. A local mode writes to disk instead, for development.
 
 ## Why this exists
 
@@ -15,7 +15,7 @@ Reddit is also closing its public Data API (new apps refused since 2026-10-31, t
 
 ## What it does
 
-- **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline
+- **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline. The feed keeps every post it listed in the last 48 hours (`front-page-state.json` in the bucket), dated by when it first appeared, so a reader that was offline between two fetches still gets the posts that came and went
 - **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days); each item links to its Reddit thread, with an `[archived copy]` link to the Markdown file
 - **Rich items:** every item carries the post's images (a gallery's in order, a video's preview frame with a link to it, a link's preview image, scaled to at most 1080 px wide; also as `media:thumbnail`) above its text
 - **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle in which no step failed; `GET /last-run` turns 503 once it is older than `STALE_AFTER_HOURS`
@@ -53,7 +53,8 @@ delete it and let Docker create it fresh) before starting.
 | `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |
 | `TOP_PERIOD` | no | Period for top posts: `hour`, `day`, `week`, `month`, `year`, `all` (default: `week`) |
 | `TOP_LIMIT` | no | Number of top posts per subreddit (default: `25`) |
-| `FRONT_PAGE_LIMIT` | no | Number of front page posts (default: `10`) |
+| `FRONT_PAGE_LIMIT` | no | Hot posts read from the front page on each fetch (default: `25`) |
+| `FRONT_PAGE_KEEP_HOURS` | no | Hours a front-page post stays in the feed after it first appeared (default: `48`); a post still on the hot list always stays |
 
 To get a Reddit OAuth client ID and secret, create a "script" app at <https://www.reddit.com/prefs/apps>.
 
@@ -85,7 +86,7 @@ output/
 A single Cloud Run Service (`MODE=server`) handles both serving and fetching:
 
 - **Feed serving**: reads from a private GCS bucket and serves files with token auth (always running, cpu_idle=true for always-free tier)
-- **Fetch trigger**: `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket, answering 500 if any step failed; Cloud Scheduler calls this every 12 hours
+- **Fetch trigger**: `POST /fetch` with `{"token": "..."}` runs a full fetch cycle synchronously and writes results to the GCS bucket, answering 500 if any step failed (409 if a cycle is already running); a Cloudflare Worker's Cron Trigger calls this every 2 hours
 
 ```
 POST /fetch                             — trigger fetch (body: {"token": "TOKEN"})

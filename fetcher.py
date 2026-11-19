@@ -7,8 +7,10 @@ server.py calls run_all() on POST /fetch), otherwise to OUTPUT_DIR on a
 configurable interval (default 12h; local development).
 
 Outputs:
-  reddit-front-page.xml      — your Reddit front page (hot), built from the API
+  reddit-front-page.xml      — your Reddit front page (hot), built from the API:
+                               every post it listed in the last 48 h
   reddit-front-page          — extension-less copy (for Feedly)
+  front-page-state.json      — those posts and when each was first listed
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
   {subreddit}/{hash}.md      — archived post (pruned after ARCHIVE_DAYS days)
   last-run                   — UTC ISO timestamp of the last cycle with no failed step
@@ -17,6 +19,7 @@ Outputs:
 import glob
 import hashlib
 import html
+import json
 import logging
 import os
 import time
@@ -49,7 +52,13 @@ ARCHIVE_DAYS = int(os.environ.get("ARCHIVE_DAYS", "30"))
 TOP_PERIOD = os.environ.get("TOP_PERIOD", "week")
 TOP_LIMIT = int(os.environ.get("TOP_LIMIT", "25"))
 
-FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "10"))
+FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "25"))
+# The front-page feed keeps every post it listed in the last
+# FRONT_PAGE_KEEP_HOURS, not only the current hot list, so a reader that was
+# offline between two fetches still gets the posts that came and went.
+FRONT_PAGE_KEEP_HOURS = int(os.environ.get("FRONT_PAGE_KEEP_HOURS", "48"))
+FRONT_PAGE_MAX_ITEMS = 150
+FRONT_PAGE_STATE = "front-page-state.json"
 
 # Images in items: Reddit's rendition at most this wide (originals run to
 # 9000 px), and a gallery's first images up to Reddit's own maximum.
@@ -88,6 +97,22 @@ def write_file(path, content, content_type="application/xml"):
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(content)
     log.info("Wrote %s", path)
+
+
+def read_file(path) -> bytes | None:
+    """What write_file wrote at path, or None when there is nothing there."""
+    if GCS_BUCKET:
+        from google.api_core.exceptions import NotFound
+
+        try:
+            return _gcs().bucket(GCS_BUCKET).blob(path).download_as_bytes(timeout=60)
+        except NotFound:
+            return None
+    try:
+        with open(os.path.join(OUTPUT_DIR, path), "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
 
 
 def _new_feed(title: str, description: str, link: str) -> FeedGenerator:
@@ -160,8 +185,11 @@ def _is_video(post) -> bool:
     return any(_get(source, "is_video") for source in _media_sources(post))
 
 
-def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
-    """Add a post: its images, text and links, bylined with its subreddit."""
+ENTRY_KEYS = ("id", "title", "link", "creator", "description", "thumbnail", "published")
+
+
+def _entry(post, archive_url: str = "") -> dict:
+    """A post as feed item data: its images, text and links, bylined with its subreddit."""
     permalink = f"https://www.reddit.com{post.permalink}"
     subreddit = f"r/{post.subreddit.display_name}"
     links = []
@@ -182,19 +210,54 @@ def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
         body.append(f'<p><a href="{html.escape(permalink)}">▶ Video on Reddit</a></p>')
     body.append(post.selftext_html or "")
     body.append(f"<p>{html.escape(subreddit)} {footer}</p>")
+    return {
+        "id": post.fullname,
+        "title": post.title,
+        "link": permalink,
+        "creator": subreddit,
+        "description": "".join(body),
+        "thumbnail": images[0] if images else None,
+        "published": post.created_utc,
+    }
 
+
+def _add_entry(fg: FeedGenerator, entry: dict, published: float | None = None) -> None:
+    """Append an _entry() item, dated published (default: when it was posted)."""
     fe = fg.add_entry(order="append")
-    fe.id(post.fullname)
-    fe.title(post.title)
-    fe.link(href=permalink)
+    fe.id(entry["id"])
+    fe.title(entry["title"])
+    fe.link(href=entry["link"])
     # Feed readers show dc:creator as the byline: the subreddit says more
     # on a front page than the poster's name.
-    fe.dc.dc_creator(subreddit)
-    fe.description("".join(body))
-    if images:
+    fe.dc.dc_creator(entry["creator"])
+    fe.description(entry["description"])
+    if entry["thumbnail"]:
         # The picture card and magazine views show, instead of a guess.
-        fe.media.thumbnail(url=images[0], group=None)
-    fe.pubDate(datetime.fromtimestamp(post.created_utc, tz=UTC))
+        fe.media.thumbnail(url=entry["thumbnail"], group=None)
+    when = entry["published"] if published is None else published
+    fe.pubDate(datetime.fromtimestamp(when, tz=UTC))
+
+
+def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
+    _add_entry(fg, _entry(post, archive_url))
+
+
+def _load_front_page_state() -> dict:
+    """The posts the front-page feed listed, by id; empty when missing or unreadable."""
+    raw = read_file(FRONT_PAGE_STATE)
+    if raw is None:
+        return {}
+    try:
+        posts = json.loads(raw)["posts"]
+        return {
+            pid: p
+            for pid, p in posts.items()
+            if isinstance(p, dict)
+            and all(k in p for k in (*ENTRY_KEYS, "first_seen", "rank"))
+        }
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        log.warning("Ignoring unreadable %s: %s", FRONT_PAGE_STATE, e)
+        return {}
 
 
 def fetch_front_page(reddit: praw.Reddit) -> None:
@@ -203,17 +266,41 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     Reddit stopped serving RSS (including the private reddit.com/.rss?feed=
     front page) on 2026-11-13, so the feed is built from the API listing.
     """
+    # The listing first: an API error leaves the previous files as they are.
+    hot = list(reddit.front.hot(limit=FRONT_PAGE_LIMIT))
+    now = time.time()
+    posts = _load_front_page_state()
+    for rank, post in enumerate(hot):
+        entry = _entry(post)
+        seen = posts.get(entry["id"])
+        # Refresh what the post shows; keep when it first appeared and where.
+        posts[entry["id"]] = {
+            **entry,
+            "first_seen": seen["first_seen"] if seen else now,
+            "rank": seen["rank"] if seen else rank,
+        }
+    listed = {post.fullname for post in hot}
+    cutoff = now - FRONT_PAGE_KEEP_HOURS * 3600
+    kept = [p for pid, p in posts.items() if pid in listed or p["first_seen"] >= cutoff]
+    # Newest first; posts that appeared in the same fetch keep their hot order.
+    kept.sort(key=lambda p: (-p["first_seen"], p["rank"]))
+    kept = kept[:FRONT_PAGE_MAX_ITEMS]
+
     fg = _new_feed(
         "reddit: the front page",
-        "Hot posts from your Reddit front page",
+        f"Hot posts from your Reddit front page, the last {FRONT_PAGE_KEEP_HOURS} hours",
         "https://www.reddit.com/",
     )
-    for post in reddit.front.hot(limit=FRONT_PAGE_LIMIT):
-        _add_post(fg, post)
+    # Dated by when the feed first listed a post, so a reader sorting by date
+    # shows what is new to the feed on top, however old the post.
+    for p in kept:
+        _add_entry(fg, p, published=p["first_seen"])
 
     feed = fg.rss_str(pretty=True)
     write_file("reddit-front-page.xml", feed)
     write_file("reddit-front-page", feed)  # extension-less copy for Feedly
+    state = {"version": 1, "posts": {p["id"]: p for p in kept}}
+    write_file(FRONT_PAGE_STATE, json.dumps(state), content_type="application/json")
 
 
 def build_reddit_client() -> praw.Reddit:
