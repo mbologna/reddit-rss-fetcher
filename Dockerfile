@@ -8,18 +8,23 @@ COPY requirements-uv.txt /tmp/
 RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes -r /tmp/requirements-uv.txt
 # Install exactly what uv.lock pins, checking its hashes, rather than
 # re-resolving pyproject.toml at build time; --locked fails the build when
-# uv.lock is out of date. Bytecode is compiled here because the runtime image
-# sets PYTHONDONTWRITEBYTECODE and runs read-only.
+# uv.lock is out of date. Dependencies first, so their layer survives a change
+# to the code or the docs; then the app itself, as a regular (non-editable)
+# package. Bytecode is compiled here because the runtime image sets
+# PYTHONDONTWRITEBYTECODE and runs read-only.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON=/usr/local/bin/python3 UV_PYTHON_DOWNLOADS=never \
     UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_CACHE=1
 WORKDIR /tmp/build
-COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-editable --no-install-project
+COPY README.md LICENSE ./
 COPY src/ src/
 RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
-# The CI pipeline adds org.opencontainers.image.source and .revision, and
-# .version from the release tag (pyproject.toml's version is a placeholder).
+# The CI pipeline adds org.opencontainers.image.source and .revision; the
+# release tags are a changelog and build nothing, so no .version
+# (pyproject.toml's is a placeholder).
 LABEL org.opencontainers.image.title="reddit-rss-fetcher" \
       org.opencontainers.image.description="Self-hosted Reddit RSS fetcher and subreddit archiver: authenticated feeds and Markdown exports behind a token-protected FastAPI proxy, on Cloud Run or Kubernetes" \
       org.opencontainers.image.licenses="MIT"
@@ -27,15 +32,20 @@ COPY --from=build /opt/venv /opt/venv
 # Run-time writes go to /tmp (HOME too), so the root filesystem can be
 # read-only.
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+# PORT: where the server listens. Cloud Run and most container runtimes set
+# it; 8080 otherwise.
+ENV PORT=8080
 # The base image's pip (with the packages it vendors) and ensurepip's
 # bundled pip wheel are never used at run time; removing them keeps their
 # CVEs out of the image.
 RUN /usr/local/bin/python3 -m pip uninstall -y --root-user-action=ignore pip \
     && rm -rf /usr/local/lib/python3*/ensurepip
-# A fixed UID and GID (useradd -r alone picks a system GID), so volumes see
-# the same numbers on every build. Only /output (local mode) is writable for
-# the app user.
-RUN groupadd -g 1000 appuser && useradd -r -u 1000 -g 1000 appuser \
+# A named account for the UID, for software that looks it up in
+# /etc/passwd, with a fixed GID so volumes see the same numbers on every
+# build.
+# The directories the app writes to besides /tmp, owned by its UID, so a
+# new volume mounted on one starts writable.
+RUN groupadd -g 1000 appuser && useradd -r -u 1000 -g 1000 -d /nonexistent -s /usr/sbin/nologin appuser \
     && mkdir -p /output && chown 1000:1000 /output
 # Transitional: the image's command was /app/run.sh before the src/ layout;
 # compat/run.sh runs reddit-rss-fetcher for deployments that still name it.
@@ -44,13 +54,12 @@ WORKDIR /app
 COPY --chmod=0755 compat/run.sh ./
 # The distribution's security fixes published since the base image was
 # built: Docker's official images are rebuilt only every week or few.
-# auto-release's fresh rebuild counts the base image's findings because of
-# this line, so a fix ships within a week without a base image update.
+# Each push to main that rebuilds the image takes the fixes released since.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 USER 1000:1000
-# CMD, not ENTRYPOINT, as before: a deployment's command still replaces it.
-# reddit-rss-fetcher reads MODE: server starts the HTTP server on $PORT
-# (default 8080), anything else the fetcher.
+EXPOSE 8080
+# Several programs: reddit-rss-fetcher by default, and a deployment's command
+# (or `docker run <image> <script>`) picks another from [project.scripts].
 CMD ["reddit-rss-fetcher"]

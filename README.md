@@ -118,7 +118,9 @@ ghcr.io/mbologna/reddit-rss-fetcher:latest
 ghcr.io/mbologna/reddit-rss-fetcher:sha-<commit>
 ```
 
-The same run deploys that image to the Cloud Run service by its digest; the `sha-<commit>` tags of the last five versions are the rollback window. There are no releases or version tags, and no copy on Docker Hub.
+The same run deploys that image to the Cloud Run service by its digest; the `sha-<commit>` tags of the last five versions are the rollback window. Images carry only those two tags and no version number, and there is no copy on Docker Hub.
+
+Releases are a changelog. Every Monday at 06:00 UTC the auto-release job reads the [Conventional Commits](https://www.conventionalcommits.org/) subjects merged since the last tag; if one is a `feat`, `fix`, `perf`, `revert` or breaking change, it tags `vX.Y.Z` and publishes a GitHub Release listing them. A week with only dependency updates gets a maintenance release. The tags build no image and deploy nothing.
 
 The image runs as uid `1000`, has no pip, and writes only to `/tmp` and `/output`, so its root filesystem can be read-only.
 

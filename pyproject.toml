@@ -1,9 +1,9 @@
 [project]
 name = "reddit-rss-fetcher"
-# A placeholder, never bumped: a release is the git tag vX.Y.Z that
-# auto-release creates, and the image built from that tag carries the
-# version in its org.opencontainers.image.version label. Nothing reads this
-# field at run time.
+# A placeholder, never bumped: each push to main publishes its image as
+# latest and sha-<commit>, and the git tag vX.Y.Z that auto-release creates
+# marks a changelog entry with no image of its own. Nothing reads this field
+# at run time.
 version = "0.0.0"
 description = "Self-hosted Reddit RSS fetcher and subreddit archiver: authenticated feeds and Markdown exports behind a token-protected FastAPI proxy, on Cloud Run or Kubernetes"
 readme = "README.md"
@@ -70,6 +70,12 @@ ignore = [
 quote-style = "double"
 indent-style = "space"
 
+[tool.mypy]
+# The pre-commit hook passes mypy only the staged files: without this, a
+# commit that touches only tests checks them against an unresolved package
+# (every import Any) and leaves a cache that fails the next full run.
+mypy_path = "src"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --strict-markers"
@@ -79,8 +85,6 @@ exclude_dirs = ["tests"]
 
 [tool.coverage.run]
 source = ["reddit_rss_fetcher"]
-# `python -m reddit_rss_fetcher` only calls main().
-omit = ["*/__main__.py"]
 
 [tool.coverage.report]
 # CI fails below this total (python-ci and ci-templates' python-test read
