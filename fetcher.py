@@ -51,6 +51,11 @@ TOP_LIMIT = int(os.environ.get("TOP_LIMIT", "25"))
 
 FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "10"))
 
+# Images in items: Reddit's rendition at most this wide (originals run to
+# 9000 px), and a gallery's first images up to Reddit's own maximum.
+MAX_IMAGE_WIDTH = 1080
+GALLERY_LIMIT = 20
+
 FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
 
 _gcs_client = None
@@ -93,11 +98,70 @@ def _new_feed(title: str, description: str, link: str) -> FeedGenerator:
     fg.link(href=link, rel="alternate")
     fg.language("en")
     fg.load_extension("dc")
+    fg.load_extension("media")
     return fg
 
 
+def _get(obj, name):
+    """An attribute of a Submission, or a key of a crosspost parent's dict."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _preview_image(preview) -> str | None:
+    images = (preview or {}).get("images") or []
+    if not images:
+        return None
+    fitting = [
+        r for r in images[0].get("resolutions", []) if r["width"] <= MAX_IMAGE_WIDTH
+    ]
+    best = max(fitting, key=lambda r: r["width"]) if fitting else images[0]["source"]
+    return best["url"]
+
+
+def _gallery_images(gallery_data, media_metadata) -> list[str]:
+    urls = []
+    for item in (gallery_data or {}).get("items", [])[:GALLERY_LIMIT]:
+        meta = (media_metadata or {}).get(item["media_id"], {})
+        if meta.get("status") != "valid":  # still processing, or removed
+            continue
+        if meta.get("e") == "AnimatedImage":
+            url = meta["s"].get("gif")
+        else:
+            fitting = [p for p in meta.get("p", []) if p["x"] <= MAX_IMAGE_WIDTH]
+            url = max(fitting, key=lambda p: p["x"])["u"] if fitting else meta["s"]["u"]
+        if url:
+            urls.append(url)
+    return urls
+
+
+def _media_sources(post) -> list:
+    """The post, then the original of a crosspost, which holds the media."""
+    return [post, *(_get(post, "crosspost_parent_list") or [])[:1]]
+
+
+def _post_images(post) -> list[str]:
+    """Gallery images, else the preview (image, video frame, link image)."""
+    for source in _media_sources(post):
+        urls = _gallery_images(
+            _get(source, "gallery_data"), _get(source, "media_metadata")
+        )
+        if not urls:
+            preview = _preview_image(_get(source, "preview"))
+            urls = [preview] if preview else []
+        if urls:
+            # The API HTML-escapes these URLs (&amp; in the query string).
+            return [html.unescape(url) for url in urls]
+    return []
+
+
+def _is_video(post) -> bool:
+    return any(_get(source, "is_video") for source in _media_sources(post))
+
+
 def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
-    """Add a post that links to its Reddit thread, bylined with its subreddit."""
+    """Add a post: its images, text and links, bylined with its subreddit."""
     permalink = f"https://www.reddit.com{post.permalink}"
     subreddit = f"r/{post.subreddit.display_name}"
     links = []
@@ -110,6 +174,15 @@ def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
         f'<a href="{html.escape(url)}">[{label}]</a>' for label, url in links
     )
 
+    images = _post_images(post)
+    body = [f'<p><img src="{html.escape(url)}" alt=""></p>' for url in images]
+    if _is_video(post):
+        # Readers drop <video>, and v.redd.it's fallback file has no sound:
+        # the preview frame above plus a link is what works.
+        body.append(f'<p><a href="{html.escape(permalink)}">▶ Video on Reddit</a></p>')
+    body.append(post.selftext_html or "")
+    body.append(f"<p>{html.escape(subreddit)} {footer}</p>")
+
     fe = fg.add_entry(order="append")
     fe.id(post.fullname)
     fe.title(post.title)
@@ -117,9 +190,10 @@ def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
     # Feed readers show dc:creator as the byline: the subreddit says more
     # on a front page than the poster's name.
     fe.dc.dc_creator(subreddit)
-    fe.description(
-        (post.selftext_html or "") + f"<p>{html.escape(subreddit)} {footer}</p>"
-    )
+    fe.description("".join(body))
+    if images:
+        # The picture card and magazine views show, instead of a guess.
+        fe.media.thumbnail(url=images[0], group=None)
     fe.pubDate(datetime.fromtimestamp(post.created_utc, tz=UTC))
 
 
