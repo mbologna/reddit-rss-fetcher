@@ -18,8 +18,8 @@ Reddit is also closing its public Data API (new apps refused since 2026-10-31, t
 - **Front page feed:** fetches the hot posts of your front page via PRAW and writes `reddit-front-page.xml`, with the subreddit as each item's byline. The feed keeps every post it listed in the last 48 hours (`front-page-state.json` in the bucket), dated by when it first appeared, so a reader that was offline between two fetches still gets the posts that came and went
 - **Subreddit archiver:** for each configured subreddit, fetches top posts via PRAW, writes `{subreddit}.xml` + `{subreddit}/{hash}.md` archive files (pruned after `ARCHIVE_DAYS` days); each item links to its Reddit thread, with an `[archived copy]` link to the Markdown file
 - **Rich items:** every item carries the post's images (a gallery's in order, a video's preview frame with a link to it, a link's preview image, scaled to at most 1080 px wide; also as `media:thumbnail`) above its text
-- **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle in which no step failed; `GET /healthz` answers `{"status":"ok","last_run":…}`, or 503 with `{"status":"down","problems":[…]}` once it is older than `STALE_AFTER_HOURS` (or missing)
-- **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/healthz` is public
+- **Health check:** writes `last-run` (UTC ISO timestamp) after each cycle in which no step failed; `GET /health` answers `{"status":"ok","last_run":…}`, or 503 with `{"status":"down","problems":[…]}` once it is older than `STALE_AFTER_HOURS` (or missing)
+- **Auth proxy** (`server.py`): FastAPI service that reads files from GCS and requires a `?token=` query parameter on feed endpoints; `/health` is public
 
 ## Quick start
 
@@ -65,7 +65,7 @@ To get a Reddit OAuth client ID and secret, create a "script" app at <https://ww
 | `GCS_BUCKET` | yes | GCS bucket containing the fetched files |
 | `SERVE_TOKEN` | yes | Token required on `?token=` query parameter for feed endpoints |
 | `FETCH_TOKEN` | for `/fetch` | Token required by `POST /fetch`. Separate from `SERVE_TOKEN`, so whatever triggers fetches can't read the feeds; unset, `/fetch` answers 503 |
-| `STALE_AFTER_HOURS` | no | Age of `last-run` at which `/healthz` returns 503 (default: `7`, three missed 2-hour cycles) |
+| `STALE_AFTER_HOURS` | no | Age of `last-run` at which `/health` returns 503 (default: `7`, three missed 2-hour cycles) |
 
 Set `MODE=server` to start `server.py` instead of `fetcher.py` (the `run.sh` entrypoint reads this).
 
@@ -91,7 +91,7 @@ A single Cloud Run Service (`MODE=server`) handles both serving and fetching:
 
 ```
 POST /fetch                             — trigger fetch (body: {"token": "FETCH_TOKEN"})
-GET  /healthz                           — 200, no auth (health check); 503 when stale
+GET  /health                           — 200, no auth (health check); 503 when stale
 GET  /reddit-front-page?token=TOKEN     — 200, XML feed
 GET  /reddit-front-page.xml?token=TOKEN — same
 GET  /reddit-front-page                 — 401 (missing token)
