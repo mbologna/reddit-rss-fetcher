@@ -47,7 +47,7 @@ delete it and let Docker create it fresh) before starting.
 | `REDDIT_TOTP_SECRET` | no | TOTP secret if the account has 2FA enabled (appended to the password as a one-time code) |
 | `BASE_URL` | for archiver | Public base URL for archived post links |
 | `SERVE_TOKEN` | with `server.py` | Appended to archived post links, which `server.py` serves only with the token |
-| `GCS_BUCKET` | for GCS mode | Bucket name (enables GCS mode: running `fetcher.py` directly does a single cycle and exits; on Cloud Run, `server.py` runs the cycle on `POST /fetch`) |
+| `GCS_BUCKET` | for GCS mode | Bucket name (enables GCS mode: running the fetcher directly (`reddit-rss-fetch`) does a single cycle and exits; on Cloud Run, `server.py` runs the cycle on `POST /fetch`) |
 | `OUTPUT_DIR` | for local mode | Output directory when GCS_BUCKET is not set (default: `/output`) |
 | `FETCH_INTERVAL_HOURS` | no | Fetch interval in hours (default: `12`, local mode only) |
 | `ARCHIVE_DAYS` | no | Days to keep archived markdown files (default: `30`) |
@@ -67,7 +67,7 @@ To get a Reddit OAuth client ID and secret, create a "script" app at <https://ww
 | `FETCH_TOKEN` | for `/fetch` | Token required by `POST /fetch`. Separate from `SERVE_TOKEN`, so whatever triggers fetches can't read the feeds; unset, `/fetch` answers 503 |
 | `STALE_AFTER_HOURS` | no | Age of `last-run` at which `/health` returns 503 (default: `7`, three missed 2-hour cycles) |
 
-Set `MODE=server` to start `server.py` instead of `fetcher.py` (the `run.sh` entrypoint reads this).
+Set `MODE=server` to start the server instead of the fetcher (the image's command, `reddit-rss-fetcher`, reads this). The server listens on `PORT` (Cloud Run sets it), default `8080`.
 
 ## Output structure
 
@@ -112,9 +112,11 @@ ghcr.io/mbologna/reddit-rss-fetcher:latest
 ghcr.io/mbologna/reddit-rss-fetcher:<sha>
 ```
 
-The entrypoint (`run.sh`) selects the mode based on `MODE`:
-- `MODE=server` → `uvicorn server:app --host 0.0.0.0 --port 8080`
-- anything else → `python -u fetcher.py`
+The image's command, `reddit-rss-fetcher`, selects the mode based on `MODE`:
+- `MODE=server` → `reddit-rss-server`: uvicorn on `0.0.0.0`, port `$PORT` (default `8080`)
+- anything else → `reddit-rss-fetch`
+
+`/app/run.sh`, the command before the code moved to `src/reddit_rss_fetcher/`, still works and runs `reddit-rss-fetcher`.
 
 ## Development
 

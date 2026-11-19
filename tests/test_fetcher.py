@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import fetcher
+from reddit_rss_fetcher import fetcher
 
 # ── fetch_front_page ──────────────────────────────────────────────────────────
 
@@ -67,10 +67,7 @@ def test_fetch_front_page_writes_rss_from_api(tmp_path, monkeypatch):
     assert [i.findtext("title") for i in items] == ["Front <Page> Post", "Second"]
     first = items[0]
     assert first.findtext("guid") == "t3_xyz789"
-    assert (
-        first.findtext("link")
-        == "https://www.reddit.com/r/python/comments/xyz789/front_page_post/"
-    )
+    assert first.findtext("link") == "https://www.reddit.com/r/python/comments/xyz789/front_page_post/"
     dc = "{http://purl.org/dc/elements/1.1/}creator"
     assert first.findtext(dc) == "r/python"
     description = first.findtext("description")
@@ -120,21 +117,15 @@ def test_front_page_keeps_posts_that_left_the_hot_list(tmp_path, monkeypatch):
     assert state["posts"]["t3_c"]["first_seen"] == t + 2 * HOUR
 
 
-def test_front_page_dates_items_by_first_listing_and_refreshes_them(
-    tmp_path, monkeypatch
-):
+def test_front_page_dates_items_by_first_listing_and_refreshes_them(tmp_path, monkeypatch):
     t = 1_800_000_000
-    post = _make_mock_front_post(
-        post_id="a", title="Old title", created_utc=1_700_000_000.0
-    )
+    post = _make_mock_front_post(post_id="a", title="Old title", created_utc=1_700_000_000.0)
     _run_front(tmp_path, monkeypatch, t, post)
     post.title = "New title"
     _run_front(tmp_path, monkeypatch, t + HOUR, post)
     item = ET.parse(tmp_path / "reddit-front-page.xml").find("./channel/item")
     assert item.findtext("title") == "New title"
-    assert (
-        item.findtext("pubDate") == "Fri, 15 Jan 2027 08:00:00 +0000"
-    )  # t, not the post's own date
+    assert item.findtext("pubDate") == "Fri, 15 Jan 2027 08:00:00 +0000"  # t, not the post's own date
 
 
 def test_front_page_forgets_posts_after_keep_hours(tmp_path, monkeypatch):
@@ -174,9 +165,7 @@ def test_front_page_is_capped(tmp_path, monkeypatch):
 )
 def test_front_page_ignores_an_unreadable_state(tmp_path, monkeypatch, state):
     (tmp_path / fetcher.FRONT_PAGE_STATE).write_text(state)
-    guids, saved = _run_front(
-        tmp_path, monkeypatch, 1_800_000_000, _make_mock_front_post(post_id="a")
-    )
+    guids, saved = _run_front(tmp_path, monkeypatch, 1_800_000_000, _make_mock_front_post(post_id="a"))
     assert guids == ["t3_a"]
     assert list(saved["posts"]) == ["t3_a"]
 
@@ -419,9 +408,7 @@ def test_fetch_subreddit_archive_link_without_token(tmp_path, monkeypatch):
 
     fetcher.fetch_subreddit(mock_reddit, "testsubreddit")
 
-    description = ET.parse(tmp_path / "testsubreddit.xml").findtext(
-        "./channel/item/description"
-    )
+    description = ET.parse(tmp_path / "testsubreddit.xml").findtext("./channel/item/description")
     assert '.md">[archived copy]</a>' in description
 
 
@@ -503,7 +490,7 @@ def test_run_all_skips_fetching_without_credentials(tmp_path, monkeypatch, caplo
     _set_credentials(monkeypatch, "")
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
 
-    with patch("fetcher.build_reddit_client") as build:
+    with patch("reddit_rss_fetcher.fetcher.build_reddit_client") as build:
         assert fetcher.run_all() is False
 
     build.assert_not_called()
@@ -520,7 +507,7 @@ def test_run_all_shares_one_client(tmp_path, monkeypatch):
     mock_reddit.front.hot.return_value = [_make_mock_front_post()]
     mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
 
-    with patch("fetcher.build_reddit_client", return_value=mock_reddit) as build:
+    with patch("reddit_rss_fetcher.fetcher.build_reddit_client", return_value=mock_reddit) as build:
         assert fetcher.run_all() is True
 
     build.assert_called_once_with()
@@ -539,7 +526,7 @@ def test_run_all_continues_on_partial_failure(tmp_path, monkeypatch, caplog):
     mock_reddit.front.hot.side_effect = Exception("network error")
     mock_reddit.subreddit.return_value.top.return_value = [_make_mock_post()]
 
-    with patch("fetcher.build_reddit_client", return_value=mock_reddit):
+    with patch("reddit_rss_fetcher.fetcher.build_reddit_client", return_value=mock_reddit):
         assert fetcher.run_all() is False  # must not raise
 
     assert "network error" in caplog.text
@@ -565,9 +552,7 @@ def test_write_file_uploads_encoded_text_to_gcs(fake_bucket):
 
     blob = fake_bucket.blob.return_value
     fake_bucket.blob.assert_called_once_with("sub.xml")
-    blob.upload_from_string.assert_called_once_with(
-        "héllo".encode(), content_type="application/xml", timeout=60
-    )
+    blob.upload_from_string.assert_called_once_with("héllo".encode(), content_type="application/xml", timeout=60)
     assert blob.cache_control == "public, max-age=43200"
 
 
@@ -636,8 +621,8 @@ def test_build_reddit_client_appends_totp_code(monkeypatch):
     monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pw")
     monkeypatch.setattr(fetcher, "REDDIT_TOTP_SECRET", "JBSWY3DPEHPK3PXP")
     with (
-        patch("fetcher.pyotp.TOTP") as totp,
-        patch("fetcher.praw.Reddit") as reddit,
+        patch("reddit_rss_fetcher.fetcher.pyotp.TOTP") as totp,
+        patch("reddit_rss_fetcher.fetcher.praw.Reddit") as reddit,
     ):
         totp.return_value.now.return_value = "123456"
         fetcher.build_reddit_client()
@@ -648,7 +633,7 @@ def test_build_reddit_client_appends_totp_code(monkeypatch):
 
 def test_build_reddit_client_names_the_account_in_the_user_agent(monkeypatch):
     monkeypatch.setattr(fetcher, "REDDIT_USERNAME", "someone")
-    with patch("fetcher.praw.Reddit") as reddit:
+    with patch("reddit_rss_fetcher.fetcher.praw.Reddit") as reddit:
         fetcher.build_reddit_client()
 
     assert reddit.call_args.kwargs["user_agent"].endswith(" (by /u/someone)")
@@ -657,7 +642,7 @@ def test_build_reddit_client_names_the_account_in_the_user_agent(monkeypatch):
 def test_build_reddit_client_without_totp(monkeypatch):
     monkeypatch.setattr(fetcher, "REDDIT_PASSWORD", "pw")
     monkeypatch.setattr(fetcher, "REDDIT_TOTP_SECRET", "")
-    with patch("fetcher.praw.Reddit") as reddit:
+    with patch("reddit_rss_fetcher.fetcher.praw.Reddit") as reddit:
         fetcher.build_reddit_client()
 
     assert reddit.call_args.kwargs["password"] == "pw"
