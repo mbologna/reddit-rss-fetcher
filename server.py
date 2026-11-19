@@ -3,7 +3,7 @@
 HTTP server for the reddit-rss-fetcher output.
 
 Reads files from the private GCS bucket and serves them with token auth.
-/healthz is unauthenticated: 200, or 503 once the last good cycle is older
+/health is unauthenticated: 200, or 503 once the last good cycle is older
 than STALE_AFTER_HOURS (or there is none).
 POST /fetch runs a fetch cycle with its own token, FETCH_TOKEN, so whatever
 triggers fetches can't read the feeds; 500 if a step failed.
@@ -87,8 +87,8 @@ def _health(code: int, **body) -> JSONResponse:
 
 
 # HEAD too: UptimeRobot probes with HEAD first.
-@app.api_route("/healthz", methods=["GET", "HEAD"])
-def healthz():
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():
     """200 when the last good fetch cycle is recent (no auth), 503 otherwise."""
     try:
         content, _ = _read_blob("last-run")

@@ -32,10 +32,10 @@ def _mock_blob(content=b"<rss></rss>", content_type="application/xml", found=Tru
     return blob
 
 
-# ── GET /healthz (no auth) ─────────────────────────────────────────────────
+# ── GET /health (no auth) ─────────────────────────────────────────────────
 
 
-def _get_healthz(timestamp=None, method="GET"):
+def _get_health(timestamp=None, method="GET"):
     mock_bucket = MagicMock()
     if timestamp is None:
         mock_bucket.blob.return_value = _mock_blob(found=False)
@@ -43,29 +43,29 @@ def _get_healthz(timestamp=None, method="GET"):
         mock_bucket.blob.return_value = _mock_blob(content=timestamp.encode())
     with patch.object(server, "_gcs") as mock_gcs:
         mock_gcs.return_value.bucket.return_value = mock_bucket
-        return client.request(method, "/healthz")
+        return client.request(method, "/health")
 
 
-def test_healthz_requires_no_token():
+def test_health_requires_no_token():
     recent = datetime.now(UTC) - timedelta(hours=1)
 
-    resp = _get_healthz(recent.isoformat())
+    resp = _get_health(recent.isoformat())
 
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok", "last_run": recent.isoformat()}
     assert resp.headers["cache-control"] == "no-store"
 
 
-def test_healthz_answers_head():
+def test_health_answers_head():
     recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
-    assert _get_healthz(recent, method="HEAD").status_code == 200
+    assert _get_health(recent, method="HEAD").status_code == 200
 
 
-def test_healthz_is_503_when_stale():
+def test_health_is_503_when_stale():
     old = (datetime.now(UTC) - timedelta(hours=8)).isoformat()
 
-    resp = _get_healthz(old)
+    resp = _get_health(old)
 
     assert resp.status_code == 503
     body = resp.json()
@@ -73,8 +73,8 @@ def test_healthz_is_503_when_stale():
     assert body["problems"] == ["last good fetch 8.0 hours ago"]
 
 
-def test_healthz_is_503_without_a_good_cycle():
-    resp = _get_healthz(None)
+def test_health_is_503_without_a_good_cycle():
+    resp = _get_health(None)
 
     assert resp.status_code == 503
     assert resp.json() == {"status": "down", "problems": ["no good fetch cycle yet"]}
