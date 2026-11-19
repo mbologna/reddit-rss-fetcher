@@ -97,7 +97,7 @@ GET  /reddit-front-page.xml?token=TOKEN — same
 GET  /reddit-front-page                 — 401 (missing token)
 ```
 
-Infrastructure: `../infra/terraform/reddit-rss-fetcher/`
+The Cloud Run service, its bucket and IAM are managed with OpenTofu in a separate, private repository.
 
 ### Locally
 
@@ -109,7 +109,7 @@ Pre-built images are published to the GitHub Container Registry on every push to
 
 ```
 ghcr.io/mbologna/reddit-rss-fetcher:latest
-ghcr.io/mbologna/reddit-rss-fetcher:<sha>
+ghcr.io/mbologna/reddit-rss-fetcher:sha-<commit>
 ```
 
 The image's command, `reddit-rss-fetcher`, selects the mode based on `MODE`:
