@@ -32,39 +32,57 @@ def _mock_blob(content=b"<rss></rss>", content_type="application/xml", found=Tru
     return blob
 
 
-# ── GET /last-run (no auth) ────────────────────────────────────────────────
+# ── GET /healthz (no auth) ─────────────────────────────────────────────────
 
 
-def _get_last_run(timestamp, method="GET"):
+def _get_healthz(timestamp=None, method="GET"):
     mock_bucket = MagicMock()
-    mock_bucket.blob.return_value = _mock_blob(content=timestamp.encode())
+    if timestamp is None:
+        mock_bucket.blob.return_value = _mock_blob(found=False)
+    else:
+        mock_bucket.blob.return_value = _mock_blob(content=timestamp.encode())
     with patch.object(server, "_gcs") as mock_gcs:
         mock_gcs.return_value.bucket.return_value = mock_bucket
-        return client.request(method, "/last-run")
+        return client.request(method, "/healthz")
 
 
-def test_last_run_requires_no_token():
-    recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+def test_healthz_requires_no_token():
+    recent = datetime.now(UTC) - timedelta(hours=1)
 
-    resp = _get_last_run(recent)
+    resp = _get_healthz(recent.isoformat())
 
     assert resp.status_code == 200
-    assert resp.text == recent
+    assert resp.json() == {"status": "ok", "last_run": recent.isoformat()}
+    assert resp.headers["cache-control"] == "no-store"
 
 
-def test_last_run_answers_head():
+def test_healthz_answers_head():
     recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
-    assert _get_last_run(recent, method="HEAD").status_code == 200
+    assert _get_healthz(recent, method="HEAD").status_code == 200
 
 
-def test_last_run_is_503_when_stale():
-    old = (datetime.now(UTC) - timedelta(hours=26)).isoformat()
+def test_healthz_is_503_when_stale():
+    old = (datetime.now(UTC) - timedelta(hours=8)).isoformat()
 
-    resp = _get_last_run(old)
+    resp = _get_healthz(old)
 
     assert resp.status_code == 503
-    assert resp.text == old
+    body = resp.json()
+    assert body["status"] == "down"
+    assert body["problems"] == ["last good fetch 8.0 hours ago"]
+
+
+def test_healthz_is_503_without_a_good_cycle():
+    resp = _get_healthz(None)
+
+    assert resp.status_code == 503
+    assert resp.json() == {"status": "down", "problems": ["no good fetch cycle yet"]}
+
+
+def test_last_run_is_gone():
+    # The old health endpoint: now just a path the token-gated catch-all refuses.
+    assert client.get("/last-run").status_code == 401
 
 
 # ── GET /{path} ─────────────────────────────────────────────────────────────
@@ -121,6 +139,22 @@ def test_serve_returns_404_for_missing_blob():
 # ── POST /fetch ───────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _fetch_token(monkeypatch):
+    monkeypatch.setattr(server, "FETCH_TOKEN", "fetch-token")
+
+
+def test_fetch_is_disabled_without_fetch_token(monkeypatch):
+    monkeypatch.setattr(server, "FETCH_TOKEN", "")
+    resp = client.post("/fetch", json={"token": ""})
+    assert resp.status_code == 503
+
+
+def test_fetch_refuses_the_serve_token():
+    resp = client.post("/fetch", json={"token": server.SERVE_TOKEN})
+    assert resp.status_code == 401
+
+
 def test_fetch_rejects_invalid_token():
     resp = client.post("/fetch", json={"token": "wrong"})
     assert resp.status_code == 401
@@ -128,7 +162,7 @@ def test_fetch_rejects_invalid_token():
 
 def test_fetch_triggers_run_all_with_valid_token():
     with patch("fetcher.run_all", return_value=True) as mock_run_all:
-        resp = client.post("/fetch", json={"token": server.SERVE_TOKEN})
+        resp = client.post("/fetch", json={"token": server.FETCH_TOKEN})
 
     assert resp.status_code == 200
     mock_run_all.assert_called_once()
@@ -136,7 +170,7 @@ def test_fetch_triggers_run_all_with_valid_token():
 
 def test_fetch_returns_500_when_a_step_failed():
     with patch("fetcher.run_all", return_value=False):
-        resp = client.post("/fetch", json={"token": server.SERVE_TOKEN})
+        resp = client.post("/fetch", json={"token": server.FETCH_TOKEN})
 
     assert resp.status_code == 500
     assert not server._fetch_lock.locked()
@@ -145,7 +179,7 @@ def test_fetch_returns_500_when_a_step_failed():
 def test_fetch_returns_409_when_already_in_progress():
     server._fetch_lock.acquire()
     try:
-        resp = client.post("/fetch", json={"token": server.SERVE_TOKEN})
+        resp = client.post("/fetch", json={"token": server.FETCH_TOKEN})
     finally:
         server._fetch_lock.release()
 
