@@ -111,6 +111,28 @@ def test_serve_accepts_valid_token_and_returns_content():
     assert resp.content == b"<rss>ok</rss>"
 
 
+def test_feeds_stay_out_of_shared_caches():
+    mock_bucket = MagicMock()
+    mock_bucket.blob.return_value = _mock_blob()
+
+    with patch.object(server, "_gcs") as mock_gcs:
+        mock_gcs.return_value.bucket.return_value = mock_bucket
+        resp = client.get(f"/reddit-front-page?token={server.SERVE_TOKEN}")
+
+    assert resp.headers["cache-control"] == "private, no-cache"
+    for name, value in server.SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+@pytest.mark.parametrize("path", ["/reddit-front-page", "/openapi.json", "/docs", "/redoc"])
+def test_every_path_but_health_needs_the_token(path):
+    resp = client.get(path)
+
+    assert resp.status_code == 401
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.headers["x-frame-options"] == "DENY"
+
+
 def test_serve_maps_extensionless_path_to_xml():
     mock_blob = _mock_blob()
     mock_bucket = MagicMock()
