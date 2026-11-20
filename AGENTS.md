@@ -34,17 +34,28 @@ Self-hosted Reddit RSS fetcher and subreddit archiver: authenticated feeds and M
 - Every push to main that changes the image publishes it as `latest` and
   `sha-<commit>` and deploys it, by digest, to the Cloud Run service. Images
   carry no version.
-- Releases are a changelog: auto-release runs every Monday at 06:00 UTC and
-  tags `vX.Y.Z` with a GitHub Release of the commit subjects when a
-  release-worthy commit landed, or cuts a maintenance release for
-  dependency updates. The tags build nothing. `pyproject.toml`'s version
-  stays `0.0.0`.
 - Coverage may not drop below `fail_under` in `pyproject.toml`; raise it
   when tests are added.
 - Dependencies: `uv add <pkg>`; uv.lock is committed and the image installs
   it with `--locked`. `exclude-newer` keeps releases younger than 7 days out.
 - The image: non-root (uid 1000), no pip, nothing written outside `/tmp`
   or `/output` (local mode, a mounted volume).
+
+## Versioning
+
+SemVer with changelog-only releases: `vX.Y.Z` tags, each with a GitHub
+Release of the commit subjects, per the
+[versioning standard](https://github.com/mbologna/.github/blob/main/VERSIONING.md).
+
+- A tag builds no image and deploys nothing: `main` is what runs on Cloud
+  Run.
+- Never create, move or delete tags, and never edit a version number to
+  cut a release: auto-release tags from the commit types (`feat` minor;
+  `fix`, `perf`, `revert` patch; `!` or a `BREAKING CHANGE:` footer major)
+  every Monday at 06:00 UTC, and cuts a maintenance release when only
+  dependency updates landed.
+- Write Conventional Commit subjects; they decide the next version.
+- `version` in `pyproject.toml` is a placeholder that stays `0.0.0`.
 
 ## Template
 

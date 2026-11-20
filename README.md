@@ -120,8 +120,6 @@ ghcr.io/mbologna/reddit-rss-fetcher:sha-<commit>
 
 The same run deploys that image to the Cloud Run service by its digest; the `sha-<commit>` tags of the last five versions are the rollback window. Images carry only those two tags and no version number, and there is no copy on Docker Hub.
 
-Releases are a changelog. Every Monday at 06:00 UTC the auto-release job reads the [Conventional Commits](https://www.conventionalcommits.org/) subjects merged since the last tag; if one is a `feat`, `fix`, `perf`, `revert` or breaking change, it tags `vX.Y.Z` and publishes a GitHub Release listing them. A week with only dependency updates gets a maintenance release. The tags build no image and deploy nothing.
-
 The image runs as uid `1000`, has no pip, and writes only to `/tmp` and `/output`, so its root filesystem can be read-only.
 
 ## Development
@@ -138,3 +136,7 @@ The project uses [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh
 Dependencies resolve only to releases at least 7 days old (`exclude-newer` in `pyproject.toml`), and the image installs exactly what `uv.lock` pins. To take a CVE fix released less than 7 days ago, add a temporary `exclude-newer-package = { <package> = false }` override under `[tool.uv]`, run `uv lock --upgrade-package <package>`, and drop the override once the release is a week old.
 
 The project skeleton comes from the [Copier](https://copier.readthedocs.io/) template [python-app-template](https://github.com/mbologna/python-app-template), recorded in `.copier-answers.yml`. [Renovate](https://docs.renovatebot.com/) opens a pull request for each template release; `uvx copier update` applies one by hand.
+
+## Versioning
+
+`main` is what runs: each push to it that changes the image deploys it to Cloud Run ([Docker image](#docker-image)). Releases follow SemVer as a changelog: every Monday at 06:00 UTC [auto-release](https://github.com/mbologna/auto-release) tags `vX.Y.Z` from the [Conventional Commit](https://www.conventionalcommits.org/) types merged since the last tag (`feat` minor; `fix`, `perf`, `revert` patch; a breaking change major), or cuts a maintenance release for a week of only dependency updates. The tag builds no image and deploys nothing; its [GitHub Release](https://github.com/mbologna/reddit-rss-fetcher/releases) lists the changes. See the [versioning standard](https://github.com/mbologna/.github/blob/main/VERSIONING.md).
