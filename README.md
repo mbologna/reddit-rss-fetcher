@@ -101,7 +101,9 @@ GET  /{subreddit}/{hash}.md?token=TOKEN    an archived post
 GET  /reddit-front-page                    401, no token
 ```
 
-Any path is read from the bucket, and a path whose last segment has no extension gets `.xml` appended. A missing file answers 404.
+Any path is read from the bucket, and a path whose last segment has no extension gets `.xml` appended. A missing file answers 404. Without the token every path but `/health` answers 401, so a stranger learns nothing about which paths exist; the service publishes no API docs or OpenAPI schema.
+
+Every response carries `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a `Content-Security-Policy` that lets nothing run or frame the files. Files are `Cache-Control: private, no-cache`, because their URL holds the token; errors and `/health` are `no-store`.
 
 `POST /fetch` runs a full cycle synchronously. It answers 200 when every step succeeded, 500 when one failed, 409 when a cycle is already running and 401 for a wrong token. Any scheduler that can send a POST can trigger it; mine is a [Cloudflare Workers Cron Trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/) every two hours.
 

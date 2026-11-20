@@ -16,7 +16,7 @@ import secrets
 import threading
 from datetime import UTC, datetime, timedelta
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
@@ -30,10 +30,29 @@ FETCH_TOKEN = os.environ.get("FETCH_TOKEN", "")
 # alert, three in a row are.
 STALE_AFTER = timedelta(hours=float(os.environ.get("STALE_AFTER_HOURS", "7")))
 
-app = FastAPI(docs_url=None, redoc_url=None)
+# No docs and no schema: a stranger gets a 401 for every path but /health
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+# The files are feeds and Markdown, never a page: nothing may run, embed or frame them
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+}
 
 _gcs_client = None
 _fetch_lock = threading.Lock()
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """The security headers on every response, and no caching of errors."""
+    response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
+    if response.status_code >= 400:
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
 def _gcs():
@@ -113,7 +132,8 @@ def serve(path: str, token: str = ""):  # nosec B107: no token is a 401, not a d
     filename = path.rsplit("/", 1)[-1]
     gcs_path = path if "." in filename else path + ".xml"
     content, ct = _read_blob(gcs_path)
-    return Response(content=content, media_type=ct)
+    # Readers may keep a copy but must check back; shared caches must not, as the URL holds the token
+    return Response(content=content, media_type=ct, headers={"Cache-Control": "private, no-cache"})
 
 
 def main() -> None:
