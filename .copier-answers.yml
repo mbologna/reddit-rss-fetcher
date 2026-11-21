@@ -32,3 +32,5 @@ script_target: reddit_rss_fetcher:main
 smoke_cmd: python -c 'import reddit_rss_fetcher.fetcher' && GCS_BUCKET= SERVE_TOKEN=
     python -c 'import reddit_rss_fetcher.server, uvicorn'
 writable_dirs: /output
+
+#copier updated
