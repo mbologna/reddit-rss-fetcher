@@ -770,11 +770,11 @@ wheels = [
 
 [[package]]
 name = "pyotp"
-version = "2.10.0"
+version = "2.11.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2d/c6/c5d96a86fd0bf6fa1bbb5c5c341ff3208638b692727a683c8289068d9a11/pyotp-2.10.0.tar.gz", hash = "sha256:d01e9703443616b03c57c700b5cbffd56a1f929c1b0f8f03131bc78c1fca9d3f", size = 18625, upload-time = "2026-06-14T03:48:49.221Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/03/c374bdcac560f33bbf7e612af7321f3060a2a47c537e6f374967151519ba/pyotp-2.11.1.tar.gz", hash = "sha256:c7ce82657d7aa8eef39afb68fc49fb470156919ecaa2c1255d89b6ef57e9e1f5", size = 22834, upload-time = "2026-11-14T23:31:39.953Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/33/7b83bde70eddaaaaef487751a9c3a5cc0c0be54620ded0e120ebdc401ff9/pyotp-2.10.0-py3-none-any.whl", hash = "sha256:1df2f6a1bcc3bb0716172a5215ddc2f8c7c7fd26a13df9927d52e1746934836c", size = 13768, upload-time = "2026-06-14T03:48:47.831Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/e9/a64b40e4acd26169805031c9f2de3931b9dad9a6a5750e671c10a4b75f04/pyotp-2.11.1-py3-none-any.whl", hash = "sha256:74a92f3bbf5ebb71ad3bee5d6a92422318c3273f26a19ec60d482c457162946c", size = 14282, upload-time = "2026-11-14T23:31:38.796Z" },
 ]
 
 [[package]]
