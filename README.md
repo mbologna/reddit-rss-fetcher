@@ -139,6 +139,16 @@ Dependencies resolve only to releases at least 7 days old (`exclude-newer` in `p
 
 The project skeleton comes from the [Copier](https://copier.readthedocs.io/) template [python-app-template](https://github.com/mbologna/python-app-template), recorded in `.copier-answers.yml`. [Renovate](https://docs.renovatebot.com/) opens a pull request for each template release; `uvx copier update` applies one by hand.
 
+## Why not an existing tool
+
+- Reddit itself no longer serves `.rss` feeds: they answer 404.
+- [RSSHub](https://docs.rsshub.app/), which builds feeds for sites without one, has no Reddit route.
+- [RSS-Bridge](https://github.com/RSS-Bridge/rss-bridge)'s RedditBridge uses app-only OAuth, so it can't read the front page as the logged-in user. It also has no galleries and no archive.
+- [Redlib](https://github.com/redlib-org/redlib), an alternative Reddit front end, works by impersonating the official app, against Reddit's terms.
+- Every option built on the API, this one included, ends when Reddit's Data API closes, by March 2027.
+
+Checked 2026-11-23.
+
 ## Versioning
 
 `main` is what runs: each push to it that changes the image deploys it to Cloud Run ([Docker image](#docker-image)). Releases follow SemVer as a changelog: every Monday at 06:00 UTC [auto-release](https://github.com/mbologna/auto-release) tags `vX.Y.Z` from the [Conventional Commit](https://www.conventionalcommits.org/) types merged since the last tag (`feat` minor; `fix`, `perf`, `revert` patch; a breaking change major), or cuts a maintenance release for a week of only dependency updates. The tag builds no image and deploys nothing; its [GitHub Release](https://github.com/mbologna/reddit-rss-fetcher/releases) lists the changes. See the [versioning standard](https://github.com/mbologna/.github/blob/main/VERSIONING.md).
