@@ -7,10 +7,9 @@ configurable interval (default 12h; local development).
 
 Outputs:
   reddit-front-page.xml      — your Reddit front page (hot), built from the API:
-                               the posts it listed in the last 48 h, one new
-                               post a subreddit a day
+                               one new post a subreddit a day, each kept 48 h
   reddit-front-page          — extension-less copy (for Feedly)
-  front-page-state.json      — those posts and when each was first listed
+  front-page-state.json      — those posts and when each entered the feed
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
   {subreddit}/{hash}.md      — archived post (pruned after ARCHIVE_DAYS days)
   last-run                   — UTC ISO timestamp of the last cycle with no failed step
@@ -56,7 +55,7 @@ FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "25"))
 # so a shallower list drops the niche subreddits first; a cap of new posts a
 # subreddit a day cuts the volume and keeps them all (0: no cap).
 FRONT_PAGE_PER_SUBREDDIT = int(os.environ.get("FRONT_PAGE_PER_SUBREDDIT", "1"))
-# The front-page feed keeps every post it listed in the last
+# The front-page feed keeps every post it admitted in the last
 # FRONT_PAGE_KEEP_HOURS, not only the current hot list, so a reader that was
 # offline between two fetches still gets the posts that came and went.
 FRONT_PAGE_KEEP_HOURS = int(os.environ.get("FRONT_PAGE_KEEP_HOURS", "48"))
@@ -305,7 +304,7 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
         f"Hot posts from your Reddit front page, the last {FRONT_PAGE_KEEP_HOURS} hours",
         "https://www.reddit.com/",
     )
-    # Dated by when the feed first listed a post, so a reader sorting by date
+    # Dated by when the feed admitted a post, so a reader sorting by date
     # shows what is new to the feed on top, however old the post.
     for p in kept:
         _add_entry(fg, p, published=p["first_seen"])
