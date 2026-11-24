@@ -277,10 +277,15 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     now = time.time()
     posts = _load_front_page_state()
     new = capped = 0
+    # Every listed post, its rank, and whether the feed has it: replayed from
+    # the logs, the ranks show what the per-subreddit cap left out.
+    listing = []
     for rank, post in enumerate(hot):
         entry = _entry(post)
         seen = posts.get(entry["id"])
-        if seen is None and _subreddit_full(posts, entry["creator"], now):
+        in_feed = seen is not None or not _subreddit_full(posts, entry["creator"], now)
+        listing.append([entry["id"], entry["creator"], rank, int(in_feed)])
+        if not in_feed:
             # Left out, not remembered: a later fetch may still admit it.
             capped += 1
             continue
@@ -298,6 +303,7 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     kept.sort(key=lambda p: (-p["first_seen"], p["rank"]))
     kept = kept[:FRONT_PAGE_MAX_ITEMS]
     log.info("Front page: %d listed, %d new, %d capped, %d in feed", len(hot), new, capped, len(kept))
+    log.info("Front page listing: %s", json.dumps(listing, separators=(",", ":")))
 
     fg = _new_feed(
         "reddit: the front page",

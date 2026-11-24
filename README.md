@@ -45,7 +45,7 @@ Big subreddits enter the hot list near its top and niche ones lower down, so rea
 
 The first row is counted from `front-page-state.json`. The others filter the same posts by the rank at which each entered the list, so the top-10 row is a lower bound. Across fetches the cap admits whichever post comes first: in 26 of the 68 slots, a later post from the same subreddit entered the list higher than the one admitted. Admitting those as well would have brought 48 items a day.
 
-Each fetch logs how many posts it listed, admitted and left out, and how many the feed holds.
+Each fetch logs how many posts it listed, admitted and left out, and how many the feed holds, then the listing itself as JSON: `[post ID, subreddit, rank, 1 if in the feed]` for each post. Replayed from the logs, the listings give each post's rank over time, including the posts the cap left out.
 
 ## Quick start
 

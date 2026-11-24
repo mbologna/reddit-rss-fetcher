@@ -166,6 +166,8 @@ def test_front_page_admits_one_new_post_a_subreddit_a_day(tmp_path, monkeypatch,
         guids, _ = _run_front(tmp_path, monkeypatch, t, a, b, other)
     assert guids == ["t3_a", "t3_o"]
     assert "Front page: 3 listed, 2 new, 1 capped, 2 in feed" in caplog.messages
+    listing = '[["t3_a","r/python",0,1],["t3_b","r/python",1,0],["t3_o","r/rust",2,1]]'
+    assert f"Front page listing: {listing}" in caplog.messages
     # An admitted post stays and refreshes; a new one waits out the day.
     guids, _ = _run_front(tmp_path, monkeypatch, t + 22 * HOUR, a, b)
     assert guids == ["t3_a", "t3_o"]
