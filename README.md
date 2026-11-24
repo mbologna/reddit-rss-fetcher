@@ -13,9 +13,9 @@ This project reads the front page and subreddits through the Reddit API with [PR
 
 ## What it writes
 
-- `reddit-front-page.xml`, the hot posts of the account's front page, with the subreddit as each item's byline. The feed keeps every post that was in the top `FRONT_PAGE_LIMIT` (10 by default) at a fetch in the last `FRONT_PAGE_KEEP_HOURS` (48 by default), up to 150 items, dated by when the post first appeared in the feed. A reader that was offline between two fetches still gets posts that came and went. `front-page-state.json` records those posts between runs.
+- `reddit-front-page.xml`, the hot posts of the account's front page, with the subreddit as each item's byline. The feed keeps every post it admitted in the last `FRONT_PAGE_KEEP_HOURS` (48 by default), up to 150 items, dated by when the post first appeared in the feed. A reader that was offline between two fetches still gets posts that came and went. `front-page-state.json` records those posts between runs.
 
-  Every post that enters the hot list at a fetch becomes a new item in the reader, so `FRONT_PAGE_LIMIT`, not `FRONT_PAGE_KEEP_HOURS`, sets how many items a day the feed brings: the deeper the list, the more posts pass through its bottom ranks. Each fetch logs how many posts it listed, how many were new and how many the feed holds.
+  Every post the feed admits becomes a new item in the reader, so `FRONT_PAGE_KEEP_HOURS` doesn't set how many items a day the feed brings; the admission rule does. Of the posts in the hot list, the feed admits `FRONT_PAGE_PER_SUBREDDIT` (1 by default) new posts a subreddit a day, the higher-ranked first; the next one gets in at the first fetch 23 hours later. Big subreddits enter the hot list near the top and niche ones lower, so a shallower list would drop the niche subreddits first. Measured on one account over 48 hours (2026-11-22 to 24), with the top 25 read every two hours: admitting every post brought 74 items a day from 46 subreddits; the top 10 alone, 30 a day from 21 subreddits; the top 25 at one a subreddit a day, 34 a day from all 46. Each fetch logs how many posts it listed, admitted and left out, and how many the feed holds.
 - `{subreddit}.xml` for each subreddit in `SUBREDDITS`: its top posts for `TOP_PERIOD`. Each item links to the Reddit thread and to an `[archived copy]`, `{subreddit}/{hash}.md`, holding the title, date, author, URL and self text. Archived files older than `ARCHIVE_DAYS` are deleted.
 - Each item shows the post's images above its text: a gallery's first 20 images in order, a video's preview frame with a link to the video, or a link's preview image. Images use Reddit's rendition at most 1,080 px wide, and the first is also the item's `media:thumbnail`.
 - `last-run`, a UTC ISO 8601 timestamp, written only after a cycle in which no step failed. A failed step does not stop the others.
@@ -74,7 +74,8 @@ The package installs three console scripts:
 | `ARCHIVE_DAYS` | no | Days to keep archived Markdown files (default `30`) |
 | `TOP_PERIOD` | no | Period for top posts: `hour`, `day`, `week`, `month`, `year` or `all` (default `week`) |
 | `TOP_LIMIT` | no | Top posts per subreddit (default `25`) |
-| `FRONT_PAGE_LIMIT` | no | Hot posts read from the front page on each fetch, the rank a post must reach to enter the feed (default `10`) |
+| `FRONT_PAGE_LIMIT` | no | Hot posts read from the front page on each fetch (default `25`) |
+| `FRONT_PAGE_PER_SUBREDDIT` | no | New front-page posts admitted per subreddit a day (default `1`; `0` admits every post) |
 | `FRONT_PAGE_KEEP_HOURS` | no | Hours a front-page post stays in the feed after it first appeared (default `48`); a post still on the hot list always stays |
 
 ### Server

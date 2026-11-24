@@ -54,7 +54,7 @@ def test_fetch_front_page_writes_rss_from_api(tmp_path, monkeypatch):
     mock_reddit = MagicMock()
     mock_reddit.front.hot.return_value = [
         _make_mock_front_post(),
-        _make_mock_front_post(post_id="second", title="Second", selftext_html=None),
+        _make_mock_front_post(post_id="second", title="Second", selftext_html=None, subreddit="rust"),
     ]
 
     fetcher.fetch_front_page(mock_reddit)
@@ -107,7 +107,7 @@ def _run_front(tmp_path, monkeypatch, now, *posts):
 
 def test_front_page_keeps_posts_that_left_the_hot_list(tmp_path, monkeypatch, caplog):
     t = 1_800_000_000
-    a, b, c = (_make_mock_front_post(post_id=x, title=x) for x in "abc")
+    a, b, c = (_make_mock_front_post(post_id=x, title=x, subreddit=x) for x in "abc")
     guids, _ = _run_front(tmp_path, monkeypatch, t, a, b)
     assert guids == ["t3_a", "t3_b"]
     # Two hours later b has dropped off the hot list and c is new.
@@ -115,7 +115,7 @@ def test_front_page_keeps_posts_that_left_the_hot_list(tmp_path, monkeypatch, ca
     with caplog.at_level("INFO"):
         guids, state = _run_front(tmp_path, monkeypatch, t + 2 * HOUR, c, a)
     assert guids == ["t3_c", "t3_a", "t3_b"]
-    assert "Front page: 2 listed, 1 new, 3 in feed" in caplog.messages
+    assert "Front page: 2 listed, 1 new, 0 capped, 3 in feed" in caplog.messages
     assert state["posts"]["t3_a"]["first_seen"] == t
     assert state["posts"]["t3_c"]["first_seen"] == t + 2 * HOUR
 
@@ -134,7 +134,7 @@ def test_front_page_dates_items_by_first_listing_and_refreshes_them(tmp_path, mo
 def test_front_page_forgets_posts_after_keep_hours(tmp_path, monkeypatch):
     monkeypatch.setattr(fetcher, "FRONT_PAGE_KEEP_HOURS", 3)
     t = 1_800_000_000
-    a, b = (_make_mock_front_post(post_id=x) for x in "ab")
+    a, b = (_make_mock_front_post(post_id=x, subreddit=x) for x in "ab")
     _run_front(tmp_path, monkeypatch, t, a)
     guids, state = _run_front(tmp_path, monkeypatch, t + 4 * HOUR, b)
     assert guids == ["t3_b"]
@@ -152,9 +152,36 @@ def test_front_page_is_capped(tmp_path, monkeypatch):
         tmp_path,
         monkeypatch,
         t + HOUR,
-        *(_make_mock_front_post(post_id=x) for x in "xy"),
+        *(_make_mock_front_post(post_id=x, subreddit=x) for x in "xy"),
     )
     assert guids == ["t3_x", "t3_y"]
+
+
+def test_front_page_admits_one_new_post_a_subreddit_a_day(tmp_path, monkeypatch, caplog):
+    t = 1_800_000_000
+    a, b, c = (_make_mock_front_post(post_id=x, subreddit="python") for x in "abc")
+    other = _make_mock_front_post(post_id="o", subreddit="rust")
+    # The higher-ranked post of a subreddit gets in; the other waits.
+    with caplog.at_level("INFO"):
+        guids, _ = _run_front(tmp_path, monkeypatch, t, a, b, other)
+    assert guids == ["t3_a", "t3_o"]
+    assert "Front page: 3 listed, 2 new, 1 capped, 2 in feed" in caplog.messages
+    # An admitted post stays and refreshes; a new one waits out the day.
+    guids, _ = _run_front(tmp_path, monkeypatch, t + 22 * HOUR, a, b)
+    assert guids == ["t3_a", "t3_o"]
+    guids, state = _run_front(tmp_path, monkeypatch, t + 23 * HOUR, b, c)
+    assert guids == ["t3_b", "t3_a", "t3_o"]
+    assert state["posts"]["t3_b"]["first_seen"] == t + 23 * HOUR
+
+
+def test_front_page_per_subreddit_cap_can_be_raised_or_disabled(tmp_path, monkeypatch):
+    posts = [_make_mock_front_post(post_id=x, subreddit="python") for x in "abc"]
+    monkeypatch.setattr(fetcher, "FRONT_PAGE_PER_SUBREDDIT", 2)
+    guids, _ = _run_front(tmp_path, monkeypatch, 1_800_000_000, *posts)
+    assert guids == ["t3_a", "t3_b"]
+    monkeypatch.setattr(fetcher, "FRONT_PAGE_PER_SUBREDDIT", 0)
+    guids, _ = _run_front(tmp_path, monkeypatch, 1_800_000_000 + HOUR, *posts)
+    assert guids == ["t3_c", "t3_a", "t3_b"]
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,8 @@ configurable interval (default 12h; local development).
 
 Outputs:
   reddit-front-page.xml      — your Reddit front page (hot), built from the API:
-                               every post in its top 10 in the last 48 h
+                               the posts it listed in the last 48 h, one new
+                               post a subreddit a day
   reddit-front-page          — extension-less copy (for Feedly)
   front-page-state.json      — those posts and when each was first listed
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
@@ -49,11 +50,12 @@ ARCHIVE_DAYS = int(os.environ.get("ARCHIVE_DAYS", "30"))
 TOP_PERIOD = os.environ.get("TOP_PERIOD", "week")
 TOP_LIMIT = int(os.environ.get("TOP_LIMIT", "25"))
 
-# How deep into the hot list a post must climb to enter the feed. A feed
-# turns a ranking into a stream: every post that enters the list at any fetch
-# becomes an item, so the depth, not FRONT_PAGE_KEEP_HOURS, sets how many
-# items a reader gets.
-FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "10"))
+FRONT_PAGE_LIMIT = int(os.environ.get("FRONT_PAGE_LIMIT", "25"))
+# A feed turns the hot ranking into a stream: every post that enters the list
+# becomes an item. Big subreddits enter it near the top and niche ones lower,
+# so a shallower list drops the niche subreddits first; a cap of new posts a
+# subreddit a day cuts the volume and keeps them all (0: no cap).
+FRONT_PAGE_PER_SUBREDDIT = int(os.environ.get("FRONT_PAGE_PER_SUBREDDIT", "1"))
 # The front-page feed keeps every post it listed in the last
 # FRONT_PAGE_KEEP_HOURS, not only the current hot list, so a reader that was
 # offline between two fetches still gets the posts that came and went.
@@ -254,6 +256,17 @@ def _load_front_page_state() -> dict:
         return {}
 
 
+def _subreddit_full(posts: dict, creator: str, now: float) -> bool:
+    """Whether creator's subreddit already had its new posts of the day."""
+    if not FRONT_PAGE_PER_SUBREDDIT:
+        return False
+    # A day less an hour: the fetch a day later, which may start a few seconds
+    # early, admits the next one.
+    day_ago = now - 23 * 3600
+    recent = sum(p["creator"] == creator and p["first_seen"] > day_ago for p in posts.values())
+    return recent >= FRONT_PAGE_PER_SUBREDDIT
+
+
 def fetch_front_page(reddit: praw.Reddit) -> None:
     """Write the account's front page as RSS.
 
@@ -264,10 +277,14 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     hot = list(reddit.front.hot(limit=FRONT_PAGE_LIMIT))
     now = time.time()
     posts = _load_front_page_state()
-    new = 0
+    new = capped = 0
     for rank, post in enumerate(hot):
         entry = _entry(post)
         seen = posts.get(entry["id"])
+        if seen is None and _subreddit_full(posts, entry["creator"], now):
+            # Left out, not remembered: a later fetch may still admit it.
+            capped += 1
+            continue
         new += seen is None
         # Refresh what the post shows; keep when it first appeared and where.
         posts[entry["id"]] = {
@@ -281,11 +298,11 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     # Newest first; posts that appeared in the same fetch keep their hot order.
     kept.sort(key=lambda p: (-p["first_seen"], p["rank"]))
     kept = kept[:FRONT_PAGE_MAX_ITEMS]
-    log.info("Front page: %d listed, %d new, %d in feed", len(hot), new, len(kept))
+    log.info("Front page: %d listed, %d new, %d capped, %d in feed", len(hot), new, capped, len(kept))
 
     fg = _new_feed(
         "reddit: the front page",
-        f"Posts in the top {FRONT_PAGE_LIMIT} of your Reddit front page, the last {FRONT_PAGE_KEEP_HOURS} hours",
+        f"Hot posts from your Reddit front page, the last {FRONT_PAGE_KEEP_HOURS} hours",
         "https://www.reddit.com/",
     )
     # Dated by when the feed first listed a post, so a reader sorting by date
