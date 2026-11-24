@@ -105,14 +105,17 @@ def _run_front(tmp_path, monkeypatch, now, *posts):
     return [i.findtext("guid") for i in items], state
 
 
-def test_front_page_keeps_posts_that_left_the_hot_list(tmp_path, monkeypatch):
+def test_front_page_keeps_posts_that_left_the_hot_list(tmp_path, monkeypatch, caplog):
     t = 1_800_000_000
     a, b, c = (_make_mock_front_post(post_id=x, title=x) for x in "abc")
     guids, _ = _run_front(tmp_path, monkeypatch, t, a, b)
     assert guids == ["t3_a", "t3_b"]
     # Two hours later b has dropped off the hot list and c is new.
-    guids, state = _run_front(tmp_path, monkeypatch, t + 2 * HOUR, c, a)
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        guids, state = _run_front(tmp_path, monkeypatch, t + 2 * HOUR, c, a)
     assert guids == ["t3_c", "t3_a", "t3_b"]
+    assert "Front page: 2 listed, 1 new, 3 in feed" in caplog.messages
     assert state["posts"]["t3_a"]["first_seen"] == t
     assert state["posts"]["t3_c"]["first_seen"] == t + 2 * HOUR
 
