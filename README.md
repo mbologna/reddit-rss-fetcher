@@ -13,9 +13,7 @@ This project reads the front page and subreddits through the Reddit API with [PR
 
 ## What it writes
 
-- `reddit-front-page.xml`, the hot posts of the account's front page, with the subreddit as each item's byline. The feed keeps every post it admitted in the last `FRONT_PAGE_KEEP_HOURS` (48 by default), up to 150 items, dated by when the post first appeared in the feed. A reader that was offline between two fetches still gets posts that came and went. `front-page-state.json` records those posts between runs.
-
-  Every post the feed admits becomes a new item in the reader, so `FRONT_PAGE_KEEP_HOURS` doesn't set how many items a day the feed brings; the admission rule does. Of the posts in the hot list, the feed admits `FRONT_PAGE_PER_SUBREDDIT` (1 by default) new posts a subreddit a day, the higher-ranked first; the next one gets in at the first fetch 23 hours later. Big subreddits enter the hot list near the top and niche ones lower, so a shallower list would drop the niche subreddits first. Measured on one account over 48 hours (2026-11-22 to 24), with the top 25 read every two hours: admitting every post brought 74 items a day from 46 subreddits; the top 10 alone, 30 a day from 21 subreddits; the top 25 at one a subreddit a day, 34 a day from all 46. Each fetch logs how many posts it listed, admitted and left out, and how many the feed holds.
+- `reddit-front-page.xml`, posts from the account's front page, with the subreddit as each item's byline: one new post a subreddit a day by default, each kept for `FRONT_PAGE_KEEP_HOURS` (48 by default), up to 150 items, dated by when it entered the feed. [The front page feed](#the-front-page-feed) has the rules. `front-page-state.json` records those posts between runs.
 - `{subreddit}.xml` for each subreddit in `SUBREDDITS`: its top posts for `TOP_PERIOD`. Each item links to the Reddit thread and to an `[archived copy]`, `{subreddit}/{hash}.md`, holding the title, date, author, URL and self text. Archived files older than `ARCHIVE_DAYS` are deleted.
 - Each item shows the post's images above its text: a gallery's first 20 images in order, a video's preview frame with a link to the video, or a link's preview image. Images use Reddit's rendition at most 1,080 px wide, and the first is also the item's `media:thumbnail`.
 - `last-run`, a UTC ISO 8601 timestamp, written only after a cycle in which no step failed. A failed step does not stop the others.
@@ -29,6 +27,25 @@ output/
   {subreddit}/{hash}.md      archived post
   last-run                   time of the last cycle with no failed step
 ```
+
+## The front page feed
+
+Each fetch reads the top `FRONT_PAGE_LIMIT` (25 by default) hot posts of the front page. A feed reader shows each post once, however long the feed keeps it, so the number of posts the feed admits sets how many items a day arrive; `FRONT_PAGE_KEEP_HOURS` does not.
+
+Of the posts it reads, the feed admits a subreddit's highest-ranked new post, then no other new post from that subreddit until a fetch at least 23 hours later. The window is an hour short of a day so that the fetch a day later counts even when it starts a few seconds early. `FRONT_PAGE_PER_SUBREDDIT` sets how many new posts a subreddit gets in that window; `0` admits every post. A post left out is not stored, so a later fetch can still admit it. An admitted post stays for `FRONT_PAGE_KEEP_HOURS` after it entered, or for as long as it is on the hot list, so a reader that was offline between two fetches still gets posts that came and went.
+
+Big subreddits enter the hot list near its top and niche ones lower down, so reading fewer posts drops the niche subreddits first. One account's front page over 48 hours (2026-11-22 to 24), with the top 25 read every two hours:
+
+| Rule | Items a day | Subreddits (of 46) | Share of the three biggest |
+|---|---|---|---|
+| Top 25, every post | 74 | 46 | 17% |
+| Top 10, every post | 30 | 21 | 42% |
+| Top 25, one a subreddit a day | 34 | 46 | 9% |
+| Top 25, two a subreddit a day | 55 | 46 | 11% |
+
+The first row is counted from `front-page-state.json`. The others filter the same posts by the rank at which each entered the list, so the top-10 row is a lower bound. Across fetches the cap admits whichever post comes first: in 26 of the 68 slots, a later post from the same subreddit entered the list higher than the one admitted. Admitting those as well would have brought 48 items a day.
+
+Each fetch logs how many posts it listed, admitted and left out, and how many the feed holds.
 
 ## Quick start
 
