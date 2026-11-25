@@ -77,6 +77,26 @@ def test_fetch_front_page_writes_rss_from_api(tmp_path, monkeypatch):
     assert '<a href="https://example.com/article">[link]</a>' in description
 
 
+def test_a_link_posts_link_shows_the_pages_reading_time(tmp_path, monkeypatch, pages):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    pages["https://example.com/article"] = "<article><p>" + " ".join(["word"] * 2300) + "</p></article>"
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [
+        _make_mock_front_post(),
+        _make_mock_front_post(post_id="short", url="https://example.com/short", subreddit="rust"),  # fails to load
+    ]
+
+    fetcher.fetch_front_page(mock_reddit)
+
+    items = ET.parse(tmp_path / "reddit-front-page.xml").findall("./channel/item")
+    description = items[0].findtext("description")
+    # After the post's text, where one decides whether to read on.
+    assert description.index("Body &amp; more") < description.index(
+        '<a href="https://example.com/article">[link · 10 min read]</a>'
+    )
+    assert '<a href="https://example.com/short">[link]</a>' in items[1].findtext("description")
+
+
 def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
     mock_reddit = MagicMock()
@@ -410,6 +430,19 @@ def test_fetch_subreddit_writes_rss_and_markdown(tmp_path, monkeypatch):
     assert "Post body content" in md
 
 
+def test_fetch_subreddit_shows_a_link_posts_reading_time(tmp_path, monkeypatch, pages):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    pages["https://example.com/article"] = "<p>" + " ".join(["word"] * 460) + "</p>"
+    mock_reddit = MagicMock()
+    mock_reddit.subreddit.return_value.top.return_value = [_make_mock_front_post(), _make_mock_post()]
+
+    fetcher.fetch_subreddit(mock_reddit, "python")
+
+    descriptions = [i.findtext("description") for i in ET.parse(tmp_path / "python.xml").findall("./channel/item")]
+    assert '<a href="https://example.com/article">[link · 2 min read]</a>' in descriptions[0]
+    assert "min read" not in descriptions[1]  # a self post shows its whole text
+
+
 def test_fetch_subreddit_links_thread_and_tokenised_archive(tmp_path, monkeypatch):
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(fetcher, "BASE_URL", "https://example.com")
@@ -546,6 +579,25 @@ def test_run_all_shares_one_client(tmp_path, monkeypatch):
     assert (tmp_path / "reddit-front-page.xml").exists()
     assert (tmp_path / "python.xml").exists()
     assert (tmp_path / "last-run").exists()
+    # The front page's link failed to load: counted as one attempt, kept for the next cycle.
+    links = json.loads((tmp_path / "reading-times.json").read_text())["links"]
+    assert links == {"https://example.com/article": {"words": None, "attempts": 1}}
+
+
+def test_run_all_carries_on_when_the_reading_times_cant_be_saved(tmp_path, monkeypatch, caplog):
+    _set_credentials(monkeypatch, "x")
+    monkeypatch.setattr(fetcher, "SUBREDDITS", [])
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = []
+
+    with (
+        patch("reddit_rss_fetcher.fetcher.build_reddit_client", return_value=mock_reddit),
+        patch("reddit_rss_fetcher.reading.ReadingTimes.save", side_effect=OSError("bucket gone")),
+    ):
+        assert fetcher.run_all() is True
+
+    assert "Failed to save the reading times" in caplog.text
 
 
 def test_run_all_continues_on_partial_failure(tmp_path, monkeypatch, caplog):
