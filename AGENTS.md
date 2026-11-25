@@ -10,13 +10,17 @@ Self-hosted Reddit RSS fetcher and subreddit archiver: authenticated feeds and M
 - `src/reddit_rss_fetcher/fetcher.py`: the front-page feed and the
   subreddit archiver; console script `reddit-rss-fetch` (one cycle with
   `GCS_BUCKET`, a loop writing to `OUTPUT_DIR` without).
+- `src/reddit_rss_fetcher/reading.py`: link posts' reading times: reads
+  each linked page once, counts its article's words, and keeps the counts
+  in `reading-times.json`.
 - `src/reddit_rss_fetcher/server.py`: the FastAPI web service (feeds behind
   a token, `/health`, `POST /fetch`); console script `reddit-rss-server`,
   uvicorn on `$PORT` (Cloud Run sets it), default 8080. It reads
   `GCS_BUCKET` and `SERVE_TOKEN` at import.
 - `compat/run.sh`: the image's former command, `/app/run.sh`, kept for
   deployments that still name it; remove when none does.
-- `tests/`: pytest; Reddit (PRAW) and GCS are mocked.
+- `tests/`: pytest; Reddit (PRAW) and GCS are mocked, and the `pages`
+  fixture (`conftest.py`) serves linked pages: tests never touch the network.
 - `Dockerfile`: two stages, `uv sync --locked` into `/opt/venv`, then a
   runtime without pip.
 - `.github/workflows/ci.yml`: every image built on main is pushed and

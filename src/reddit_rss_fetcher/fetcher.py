@@ -10,6 +10,7 @@ Outputs:
                                one new post a subreddit a day, each kept 48 h
   reddit-front-page          — extension-less copy (for Feedly)
   front-page-state.json      — those posts and when each entered the feed
+  reading-times.json         — the word counts of the pages link posts point to
   {subreddit}.xml            — top-of-the-week RSS feed per subreddit
   {subreddit}/{hash}.md      — archived post (pruned after ARCHIVE_DAYS days)
   last-run                   — UTC ISO timestamp of the last cycle with no failed step
@@ -28,6 +29,8 @@ from urllib.parse import quote
 import praw
 import pyotp
 from feedgen.feed import FeedGenerator
+
+from reddit_rss_fetcher.reading import ReadingTimes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -186,13 +189,17 @@ def _is_video(post) -> bool:
 ENTRY_KEYS = ("id", "title", "link", "creator", "description", "thumbnail", "published")
 
 
-def _entry(post, archive_url: str = "") -> dict:
-    """A post as feed item data: its images, text and links, bylined with its subreddit."""
+def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
+    """A post as feed item data: its images, text and links, bylined with its subreddit.
+
+    A link post's link shows the linked page's reading time, minutes, after
+    the post's text, where one decides whether to read on.
+    """
     permalink = f"https://www.reddit.com{post.permalink}"
     subreddit = f"r/{post.subreddit.display_name}"
     links = []
     if post.url != permalink:  # a link post; a self post's url is its thread
-        links.append(("link", post.url))
+        links.append((f"link · {minutes} min read" if minutes else "link", post.url))
     links.append(("comments", permalink))
     if archive_url:
         links.append(("archived copy", archive_url))
@@ -234,8 +241,8 @@ def _add_entry(fg: FeedGenerator, entry: dict, published: float | None = None) -
     fe.pubDate(datetime.fromtimestamp(when, tz=UTC))
 
 
-def _add_post(fg: FeedGenerator, post, archive_url: str = "") -> None:
-    _add_entry(fg, _entry(post, archive_url))
+def _add_post(fg: FeedGenerator, post, archive_url: str = "", minutes: int | None = None) -> None:
+    _add_entry(fg, _entry(post, archive_url, minutes))
 
 
 def _load_front_page_state() -> dict:
@@ -266,7 +273,7 @@ def _subreddit_full(posts: dict, creator: str, now: float) -> bool:
     return recent >= FRONT_PAGE_PER_SUBREDDIT
 
 
-def fetch_front_page(reddit: praw.Reddit) -> None:
+def fetch_front_page(reddit: praw.Reddit, times: ReadingTimes | None = None) -> None:
     """Write the account's front page as RSS.
 
     Reddit stopped serving RSS (including the private reddit.com/.rss?feed=
@@ -274,6 +281,8 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     """
     # The listing first: an API error leaves the previous files as they are.
     hot = list(reddit.front.hot(limit=FRONT_PAGE_LIMIT))
+    times = ReadingTimes() if times is None else times
+    times.prefetch(post.url for post in hot)
     now = time.time()
     posts = _load_front_page_state()
     new = capped = 0
@@ -281,7 +290,7 @@ def fetch_front_page(reddit: praw.Reddit) -> None:
     # the logs, the ranks show what the per-subreddit cap left out.
     listing = []
     for rank, post in enumerate(hot):
-        entry = _entry(post)
+        entry = _entry(post, minutes=times.minutes(post.url))
         seen = posts.get(entry["id"])
         in_feed = seen is not None or not _subreddit_full(posts, entry["creator"], now)
         listing.append([entry["id"], entry["creator"], rank, int(in_feed)])
@@ -345,14 +354,17 @@ def _archive_url(md_rel_path: str) -> str:
     return f"{BASE_URL}/{md_rel_path}{query}"
 
 
-def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
+def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str, times: ReadingTimes | None = None) -> None:
     fg = _new_feed(
         subreddit_name,
         f"r/{subreddit_name} — top posts of the {TOP_PERIOD}",
         f"https://www.reddit.com/r/{subreddit_name}/",
     )
 
-    for post in reddit.subreddit(subreddit_name).top(time_filter=TOP_PERIOD, limit=TOP_LIMIT):
+    top = list(reddit.subreddit(subreddit_name).top(time_filter=TOP_PERIOD, limit=TOP_LIMIT))
+    times = ReadingTimes() if times is None else times
+    times.prefetch(post.url for post in top)
+    for post in top:
         url_hashed = hashlib.md5(post.url.encode("utf-8")).hexdigest()  # nosec B324: a file name, not a security hash
         md_rel_path = f"{subreddit_name}/{url_hashed}.md"
         dt_utc = datetime.fromtimestamp(post.created_utc, tz=UTC)
@@ -368,7 +380,7 @@ def fetch_subreddit(reddit: praw.Reddit, subreddit_name: str) -> None:
             f"{post.selftext}\n"
         )
         write_file(md_rel_path, md_content, "text/plain; charset=utf-8")
-        _add_post(fg, post, _archive_url(md_rel_path))
+        _add_post(fg, post, _archive_url(md_rel_path), times.minutes(post.url))
 
     write_file(f"{subreddit_name}.xml", fg.rss_str(pretty=True))
 
@@ -395,14 +407,14 @@ def has_credentials() -> bool:
     return all([REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD])
 
 
-def fetch_subreddits(reddit: praw.Reddit) -> None:
+def fetch_subreddits(reddit: praw.Reddit, times: ReadingTimes | None = None) -> None:
     if not SUBREDDITS:
         log.warning("SUBREDDITS not set, skipping subreddit archiver")
         return
 
     log.info("Archiving subreddits: %s", ", ".join(SUBREDDITS))
     for subreddit_name in SUBREDDITS:
-        fetch_subreddit(reddit, subreddit_name)
+        fetch_subreddit(reddit, subreddit_name, times)
 
 
 def write_health() -> None:
@@ -425,13 +437,18 @@ def run_all() -> bool:
         return False
     # One client for both: it logs in once, with a single TOTP code.
     reddit = build_reddit_client()
+    times = ReadingTimes.load(read_file)
     ok = True
     for fn in (fetch_front_page, fetch_subreddits):
         try:
-            fn(reddit)
+            fn(reddit, times)
         except Exception:
             log.exception("Failed in %s", fn.__name__)
             ok = False
+    try:
+        times.save(write_file, prune=ok)
+    except Exception:  # a cache: the next cycle reads the pages again
+        log.exception("Failed to save the reading times")
     if not ok:
         log.error("Fetch cycle failed, last-run left unchanged")
         return False

@@ -16,6 +16,7 @@ This project reads the front page and subreddits through the Reddit API with [PR
 - `reddit-front-page.xml`, posts from the account's front page, with the subreddit as each item's byline: one new post a subreddit a day by default, each kept for `FRONT_PAGE_KEEP_HOURS` (48 by default), up to 150 items, dated by when it entered the feed. [The front page feed](#the-front-page-feed) has the rules. `front-page-state.json` records those posts between runs.
 - `{subreddit}.xml` for each subreddit in `SUBREDDITS`: its top posts for `TOP_PERIOD`. Each item links to the Reddit thread and to an `[archived copy]`, `{subreddit}/{hash}.md`, holding the title, date, author, URL and self text. Archived files older than `ARCHIVE_DAYS` are deleted.
 - Each item shows the post's images above its text: a gallery's first 20 images in order, a video's preview frame with a link to the video, or a link's preview image. Images use Reddit's rendition at most 1,080 px wide, and the first is also the item's `media:thumbnail`.
+- A link post's link, after the post's text, shows the linked page's reading time, as `[link · 9 min read]`: the words of its first `<article>` or `<main>` with paragraphs (else of all its paragraphs) at 230 a minute, left out under 200 words, for a page that isn't HTML and when it fails to load 3 times. Self posts show their whole text, and links to Reddit, images and videos have nothing to read, so neither gets one. Each page is read once, at most 40 new ones a cycle; `reading-times.json` keeps the counts for as long as a feed lists the link.
 - `last-run`, a UTC ISO 8601 timestamp, written only after a cycle in which no step failed. A failed step does not stop the others.
 
 ```
@@ -23,6 +24,7 @@ output/
   reddit-front-page.xml      front page feed
   reddit-front-page          extension-less copy, for Feedly
   front-page-state.json      posts in the front page feed and when each first appeared
+  reading-times.json         word counts of the pages link posts point to
   {subreddit}.xml            top posts feed
   {subreddit}/{hash}.md      archived post
   last-run                   time of the last cycle with no failed step
