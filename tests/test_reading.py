@@ -139,3 +139,18 @@ def test_fetch_page_reads_html_only(urlopen):
     assert urlopen.call_args.kwargs["timeout"] == reading.TIMEOUT
     urlopen.return_value = _response("application/pdf")
     assert real_fetch_page(ARTICLE) is None
+
+
+@pytest.mark.parametrize(
+    ("n", "line"),
+    [
+        (None, None),
+        (1, "●○○ 1 min read"),
+        (3, "●○○ 3 min read"),
+        (4, "●●○ 4 min read"),
+        (7, "●●○ 7 min read"),
+        (8, "●●● 8 min read"),
+    ],
+)
+def test_minutes_read_starts_with_dots_for_its_length(n, line):
+    assert reading.minutes_read(n) == line

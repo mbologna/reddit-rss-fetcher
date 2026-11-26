@@ -24,13 +24,15 @@ import logging
 import os
 import time
 from datetime import UTC, datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import praw
 import pyotp
 from feedgen.feed import FeedGenerator
 
+from reddit_rss_fetcher import reading
 from reddit_rss_fetcher.reading import ReadingTimes
+from reddit_rss_fetcher.text import excerpt, holds_all, paragraphs, plain_paragraphs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -69,6 +71,10 @@ FRONT_PAGE_STATE = "front-page-state.json"
 # 9000 px), and a gallery's first images up to Reddit's own maximum.
 MAX_IMAGE_WIDTH = 1080
 GALLERY_LIMIT = 20
+
+# Characters of a post's text an item shows: enough to judge it by, as in
+# feed-refinery's items.
+SHOWN_LIMIT = 800
 
 FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
 
@@ -189,21 +195,25 @@ def _is_video(post) -> bool:
 ENTRY_KEYS = ("id", "title", "link", "creator", "description", "thumbnail", "published")
 
 
-def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
-    """A post as feed item data: its images, text and links, bylined with its subreddit.
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
-    A link post's link shows the linked page's reading time, minutes, after
-    the post's text, where one decides whether to read on.
+
+def _domain(url: str) -> str:
+    host = urlsplit(url).hostname
+    return host.removeprefix("www.") if host else url
+
+
+def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
+    """A post as feed item data, laid out as feed-refinery's items: images, the text cut to SHOWN_LIMIT, the link and
+    reading time, then the counts, bylined with its subreddit.
+
+    The reading time follows the text, where one decides whether to read on:
+    for a link post the linked page's, minutes; for a self post its whole
+    text's, left out when the excerpt shows all of it.
     """
     permalink = f"https://www.reddit.com{post.permalink}"
     subreddit = f"r/{post.subreddit.display_name}"
-    links = []
-    if post.url != permalink:  # a link post; a self post's url is its thread
-        links.append((f"link · {minutes} min read" if minutes else "link", post.url))
-    links.append(("comments", permalink))
-    if archive_url:
-        links.append(("archived copy", archive_url))
-    footer = " ".join(f'<a href="{html.escape(url)}">[{label}]</a>' for label, url in links)
 
     images = _post_images(post)
     body = [f'<p><img src="{html.escape(url)}" alt=""></p>' for url in images]
@@ -211,14 +221,32 @@ def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
         # Readers drop <video>, and v.redd.it's fallback file has no sound:
         # the preview frame above plus a link is what works.
         body.append(f'<p><a href="{html.escape(permalink)}">▶ Video on Reddit</a></p>')
-    body.append(post.selftext_html or "")
-    body.append(f"<p>{html.escape(subreddit)} {footer}</p>")
+    text = plain_paragraphs(post.selftext_html or "")
+    if shown := excerpt(text, SHOWN_LIMIT):
+        body.append(paragraphs(shown))
+    article = []
+    if post.url != permalink:  # a link post; a self post's url is its thread
+        article.append(f'<a href="{html.escape(post.url)}">{html.escape(_domain(post.url))}</a>')
+    elif text and not holds_all(shown, words := len(text.split())):
+        minutes = reading.minutes(words)
+    if read := reading.minutes_read(minutes):
+        article.append(read)
+    if article:
+        body.append("<p>" + " · ".join(article) + "</p>")
+    stats = [
+        f'<a href="{html.escape(permalink)}">{_plural(post.num_comments, "comment")}</a>',
+        _plural(post.score, "point"),
+        html.escape(subreddit),
+    ]
+    if archive_url:
+        stats.append(f'<a href="{html.escape(archive_url)}">archived copy</a>')
+    body.append("<p>" + " · ".join(stats) + "</p>")
     return {
         "id": post.fullname,
         "title": post.title,
         "link": permalink,
         "creator": subreddit,
-        "description": "".join(body),
+        "description": "\n".join(body),
         "thumbnail": images[0] if images else None,
         "published": post.created_utc,
     }

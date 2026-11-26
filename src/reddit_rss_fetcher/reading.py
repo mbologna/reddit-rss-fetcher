@@ -1,9 +1,8 @@
-"""Reading times for link posts: the linked page's words at 230 a minute.
+"""Reading times: a self post's words, or for a link post the linked page's, at 230 a minute.
 
-A self post shows its whole text, and a media post has nothing to read, so
-only a link to another site gets one. Each page is read once: the counts
-stay in reading-times.json between cycles, for as long as a feed lists the
-link.
+A media post has nothing to read, so of links only one to another site gets
+one. Each page is read once: the counts stay in reading-times.json between
+cycles, for as long as a feed lists the link.
 """
 
 import json
@@ -17,6 +16,10 @@ log = logging.getLogger(__name__)
 
 WORDS_PER_MINUTE = 230
 READING_MIN = 200  # words: fewer usually means a page its scripts fill in, or only the lede
+# Before the reading time, how long the read is at a glance: up to 3 minutes,
+# up to 7, longer. Dots, not a colour: a long article isn't one to skip.
+LENGTHS = ((3, "●○○"), (7, "●●○"))
+LONG_READ = "●●●"
 CACHE = "reading-times.json"
 # New pages read a cycle, WORKERS at a time: a cycle runs inside POST /fetch,
 # which Cloud Run cuts off at 300 seconds. The rest wait for the next cycle.
@@ -102,6 +105,14 @@ def minutes(words: int | None) -> int | None:
     if not words or words < READING_MIN:
         return None
     return max(1, round(words / WORDS_PER_MINUTE))
+
+
+def minutes_read(n: int | None) -> str | None:
+    """The reading time in words after its dots, as "●●○ 6 min read"."""
+    if not n:
+        return None
+    dots = next((d for limit, d in LENGTHS if n <= limit), LONG_READ)
+    return f"{dots} {n} min read"
 
 
 class ReadingTimes:
