@@ -16,6 +16,7 @@ Outputs:
   last-run                   — UTC ISO timestamp of the last cycle with no failed step
 """
 
+import contextlib
 import glob
 import hashlib
 import html
@@ -29,6 +30,7 @@ from urllib.parse import quote, urlsplit
 import praw
 import pyotp
 from feedgen.feed import FeedGenerator
+from praw.exceptions import ClientException
 
 from reddit_rss_fetcher import reading
 from reddit_rss_fetcher.reading import ReadingTimes
@@ -211,8 +213,11 @@ def _domain(url: str) -> str:
 def _top_comment(post) -> str | None:
     """The first live top-level comment as Reddit ranks them, past stickied ones, as an item's lines; None when there's
     none, or the lookup fails: a missing comment must not cost the post."""
-    try:
+    # A post the item has read a field of that its listing lacked is already
+    # fetched, comments included: PRAW then refuses a limit, and needs none.
+    with contextlib.suppress(ClientException):
         post.comment_limit = COMMENTS_FETCHED
+    try:
         comments = list(post.comments)
     except Exception as e:
         log.info("Top comment of %s: %s", post.fullname, type(e).__name__)
