@@ -175,6 +175,28 @@ def test_an_item_shows_the_top_comment_past_stickied_and_deleted_ones(tmp_path, 
     assert post.comment_limit == fetcher.COMMENTS_FETCHED
 
 
+def test_a_fetched_posts_comments_need_no_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    from praw.exceptions import ClientException
+
+    class Fetched(SimpleNamespace):
+        """A post PRAW has fetched, as reading a field its listing lacked does: it refuses a comment limit."""
+
+        def __setattr__(self, name, value):
+            if name == "comment_limit":
+                raise ClientException("Cannot update 'comment_limit'")
+            super().__setattr__(name, value)
+
+    post = Fetched(**vars(_make_mock_front_post(comments=[_comment("c1", "Still shown")])))
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [post]
+
+    fetcher.fetch_front_page(mock_reddit)
+
+    description = ET.parse(tmp_path / "reddit-front-page.xml").findtext("./channel/item/description")
+    assert "💬 <b>u/alice</b>: Still shown" in description
+
+
 def test_a_failed_comment_lookup_keeps_the_post(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
 
