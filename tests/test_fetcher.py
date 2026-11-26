@@ -23,6 +23,7 @@ def _make_mock_front_post(
     subreddit="python",
     num_comments=12,
     score=340,
+    comments=(),
     **media,
 ):
     """A Submission stand-in. A namespace, not a MagicMock: a MagicMock would
@@ -48,6 +49,7 @@ def _make_mock_front_post(
         subreddit=SimpleNamespace(display_name=subreddit),
         num_comments=num_comments,
         score=score,
+        comments=comments,
         **fields,
     )
 
@@ -133,6 +135,62 @@ def test_a_self_post_shows_about_800_characters_and_its_whole_texts_reading_time
     # 1800 words at 230 a minute, with no link: the reading time alone.
     assert "</p>\n<p>●●● 8 min read</p>\n<p><a " in description
     assert "min read" not in items[1].findtext("description")
+
+
+def _comment(cid, body, author="alice", stickied=False):
+    return SimpleNamespace(
+        body=body,
+        body_html=f'<div class="md"><p>{body}</p></div>',
+        author=author,
+        stickied=stickied,
+        permalink=f"/r/python/comments/xyz789/front_page_post/{cid}/",
+    )
+
+
+def test_an_item_shows_the_top_comment_past_stickied_and_deleted_ones(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    sentence = "A sentence of about fifty characters, more or less. "
+    comments = [
+        _comment("c1", "Read the rules", author="AutoModerator", stickied=True),
+        SimpleNamespace(count=4, children=[]),  # a MoreComments: no body
+        _comment("c2", "[deleted]", author=None),
+        _comment("c3", "Nice &amp; " + sentence * 20, author="bob<"),
+        _comment("c4", "Never shown"),
+    ]
+    post = _make_mock_front_post(comments=comments)
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [post]
+
+    fetcher.fetch_front_page(mock_reddit)
+
+    description = ET.parse(tmp_path / "reddit-front-page.xml").findtext("./channel/item/description")
+    lines = description.split("\n")
+    assert lines[1] == '<p><a href="https://example.com/article">example.com</a></p>'
+    assert lines[2].startswith("<p>💬 <b>u/bob&lt;</b>: Nice &amp; A sentence")
+    assert lines[2].endswith(' <a href="https://www.reddit.com/r/python/comments/xyz789/front_page_post/c3/">→</a></p>')
+    comment = lines[2].split("</b>: ")[1].split(" <a ")[0]
+    assert 150 <= len(comment) <= 300 and comment.endswith("less.")
+    assert lines[3].startswith("<p><a ") and "12 comments" in lines[3]
+    assert "Never shown" not in description and "rules" not in description
+    assert post.comment_limit == fetcher.COMMENTS_FETCHED
+
+
+def test_a_failed_comment_lookup_keeps_the_post(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+
+    class Failing:
+        def __iter__(self):
+            raise RuntimeError("HTTP 500")
+
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [_make_mock_front_post(comments=Failing())]
+
+    with caplog.at_level("INFO"):
+        fetcher.fetch_front_page(mock_reddit)
+
+    description = ET.parse(tmp_path / "reddit-front-page.xml").findtext("./channel/item/description")
+    assert "💬" not in description and "12 comments" in description
+    assert "Top comment of t3_xyz789: RuntimeError" in caplog.messages
 
 
 def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
@@ -223,6 +281,7 @@ def test_front_page_admits_one_new_post_a_subreddit_a_day(tmp_path, monkeypatch,
     with caplog.at_level("INFO"):
         guids, _ = _run_front(tmp_path, monkeypatch, t, a, b, other)
     assert guids == ["t3_a", "t3_o"]
+    assert not hasattr(b, "comment_limit")  # a post left out costs no comment lookup
     assert "Front page: 3 listed, 2 new, 1 capped, 2 in feed" in caplog.messages
     listing = '[["t3_a","r/python",0,1],["t3_b","r/python",1,0],["t3_o","r/rust",2,1]]'
     assert f"Front page listing: {listing}" in caplog.messages

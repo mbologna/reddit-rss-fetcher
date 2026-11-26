@@ -75,6 +75,10 @@ GALLERY_LIMIT = 20
 # Characters of a post's text an item shows: enough to judge it by, as in
 # feed-refinery's items.
 SHOWN_LIMIT = 800
+COMMENT_LIMIT = 300  # characters of the top comment an item shows
+# Comments asked for with a post, replies included: enough for a live
+# top-level one past stickied, deleted or removed ones.
+COMMENTS_FETCHED = 8
 
 FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
 
@@ -204,9 +208,28 @@ def _domain(url: str) -> str:
     return host.removeprefix("www.") if host else url
 
 
+def _top_comment(post) -> str | None:
+    """The first live top-level comment as Reddit ranks them, past stickied ones, as an item's lines; None when there's
+    none, or the lookup fails: a missing comment must not cost the post."""
+    try:
+        post.comment_limit = COMMENTS_FETCHED
+        comments = list(post.comments)
+    except Exception as e:
+        log.info("Top comment of %s: %s", post.fullname, type(e).__name__)
+        return None
+    for c in comments:
+        body = getattr(c, "body", None)  # a MoreComments has none
+        if not body or body in ("[deleted]", "[removed]") or c.stickied or not c.author:
+            continue
+        text = excerpt(plain_paragraphs(c.body_html), COMMENT_LIMIT)
+        lead = f"💬 <b>u/{html.escape(str(c.author))}</b>: "
+        return paragraphs(text, lead, f' <a href="https://www.reddit.com{html.escape(c.permalink)}">→</a>')
+    return None
+
+
 def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
     """A post as feed item data, laid out as feed-refinery's items: images, the text cut to SHOWN_LIMIT, the link and
-    reading time, then the counts, bylined with its subreddit.
+    reading time, the top comment, then the counts, bylined with its subreddit.
 
     The reading time follows the text, where one decides whether to read on:
     for a link post the linked page's, minutes; for a self post its whole
@@ -233,6 +256,8 @@ def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
         article.append(read)
     if article:
         body.append("<p>" + " · ".join(article) + "</p>")
+    if comment := _top_comment(post):
+        body.append(comment)
     stats = [
         f'<a href="{html.escape(permalink)}">{_plural(post.num_comments, "comment")}</a>',
         _plural(post.score, "point"),
@@ -318,17 +343,19 @@ def fetch_front_page(reddit: praw.Reddit, times: ReadingTimes | None = None) -> 
     # the logs, the ranks show what the per-subreddit cap left out.
     listing = []
     for rank, post in enumerate(hot):
-        entry = _entry(post, minutes=times.minutes(post.url))
-        seen = posts.get(entry["id"])
-        in_feed = seen is not None or not _subreddit_full(posts, entry["creator"], now)
-        listing.append([entry["id"], entry["creator"], rank, int(in_feed)])
+        pid, creator = post.fullname, f"r/{post.subreddit.display_name}"
+        seen = posts.get(pid)
+        in_feed = seen is not None or not _subreddit_full(posts, creator, now)
+        listing.append([pid, creator, rank, int(in_feed)])
         if not in_feed:
             # Left out, not remembered: a later fetch may still admit it.
             capped += 1
             continue
         new += seen is None
+        # Only now: the entry looks up the post's top comment.
+        entry = _entry(post, minutes=times.minutes(post.url))
         # Refresh what the post shows; keep when it first appeared and where.
-        posts[entry["id"]] = {
+        posts[pid] = {
             **entry,
             "first_seen": seen["first_seen"] if seen else now,
             "rank": seen["rank"] if seen else rank,
