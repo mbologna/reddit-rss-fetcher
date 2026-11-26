@@ -24,13 +24,15 @@ import logging
 import os
 import time
 from datetime import UTC, datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import praw
 import pyotp
 from feedgen.feed import FeedGenerator
 
+from reddit_rss_fetcher import reading
 from reddit_rss_fetcher.reading import ReadingTimes
+from reddit_rss_fetcher.text import excerpt, holds_all, paragraphs, plain_paragraphs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -69,6 +71,14 @@ FRONT_PAGE_STATE = "front-page-state.json"
 # 9000 px), and a gallery's first images up to Reddit's own maximum.
 MAX_IMAGE_WIDTH = 1080
 GALLERY_LIMIT = 20
+
+# Characters of a post's text an item shows: enough to judge it by, as in
+# feed-refinery's items.
+SHOWN_LIMIT = 800
+COMMENT_LIMIT = 300  # characters of the top comment an item shows
+# Comments asked for with a post, replies included: enough for a live
+# top-level one past stickied, deleted or removed ones.
+COMMENTS_FETCHED = 8
 
 FETCH_INTERVAL_HOURS = int(os.environ.get("FETCH_INTERVAL_HOURS", "12"))
 
@@ -189,21 +199,44 @@ def _is_video(post) -> bool:
 ENTRY_KEYS = ("id", "title", "link", "creator", "description", "thumbnail", "published")
 
 
-def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
-    """A post as feed item data: its images, text and links, bylined with its subreddit.
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
-    A link post's link shows the linked page's reading time, minutes, after
-    the post's text, where one decides whether to read on.
+
+def _domain(url: str) -> str:
+    host = urlsplit(url).hostname
+    return host.removeprefix("www.") if host else url
+
+
+def _top_comment(post) -> str | None:
+    """The first live top-level comment as Reddit ranks them, past stickied ones, as an item's lines; None when there's
+    none, or the lookup fails: a missing comment must not cost the post."""
+    try:
+        post.comment_limit = COMMENTS_FETCHED
+        comments = list(post.comments)
+    except Exception as e:
+        log.info("Top comment of %s: %s", post.fullname, type(e).__name__)
+        return None
+    for c in comments:
+        body = getattr(c, "body", None)  # a MoreComments has none
+        if not body or body in ("[deleted]", "[removed]") or c.stickied or not c.author:
+            continue
+        text = excerpt(plain_paragraphs(c.body_html), COMMENT_LIMIT)
+        lead = f"💬 <b>u/{html.escape(str(c.author))}</b>: "
+        return paragraphs(text, lead, f' <a href="https://www.reddit.com{html.escape(c.permalink)}">→</a>')
+    return None
+
+
+def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
+    """A post as feed item data, laid out as feed-refinery's items: images, the text cut to SHOWN_LIMIT, the link and
+    reading time, the top comment, then the counts, bylined with its subreddit.
+
+    The reading time follows the text, where one decides whether to read on:
+    for a link post the linked page's, minutes; for a self post its whole
+    text's, left out when the excerpt shows all of it.
     """
     permalink = f"https://www.reddit.com{post.permalink}"
     subreddit = f"r/{post.subreddit.display_name}"
-    links = []
-    if post.url != permalink:  # a link post; a self post's url is its thread
-        links.append((f"link · {minutes} min read" if minutes else "link", post.url))
-    links.append(("comments", permalink))
-    if archive_url:
-        links.append(("archived copy", archive_url))
-    footer = " ".join(f'<a href="{html.escape(url)}">[{label}]</a>' for label, url in links)
 
     images = _post_images(post)
     body = [f'<p><img src="{html.escape(url)}" alt=""></p>' for url in images]
@@ -211,14 +244,34 @@ def _entry(post, archive_url: str = "", minutes: int | None = None) -> dict:
         # Readers drop <video>, and v.redd.it's fallback file has no sound:
         # the preview frame above plus a link is what works.
         body.append(f'<p><a href="{html.escape(permalink)}">▶ Video on Reddit</a></p>')
-    body.append(post.selftext_html or "")
-    body.append(f"<p>{html.escape(subreddit)} {footer}</p>")
+    text = plain_paragraphs(post.selftext_html or "")
+    if shown := excerpt(text, SHOWN_LIMIT):
+        body.append(paragraphs(shown))
+    article = []
+    if post.url != permalink:  # a link post; a self post's url is its thread
+        article.append(f'<a href="{html.escape(post.url)}">{html.escape(_domain(post.url))}</a>')
+    elif text and not holds_all(shown, words := len(text.split())):
+        minutes = reading.minutes(words)
+    if read := reading.minutes_read(minutes):
+        article.append(read)
+    if article:
+        body.append("<p>" + " · ".join(article) + "</p>")
+    if comment := _top_comment(post):
+        body.append(comment)
+    stats = [
+        f'<a href="{html.escape(permalink)}">{_plural(post.num_comments, "comment")}</a>',
+        _plural(post.score, "point"),
+        html.escape(subreddit),
+    ]
+    if archive_url:
+        stats.append(f'<a href="{html.escape(archive_url)}">archived copy</a>')
+    body.append("<p>" + " · ".join(stats) + "</p>")
     return {
         "id": post.fullname,
         "title": post.title,
         "link": permalink,
         "creator": subreddit,
-        "description": "".join(body),
+        "description": "\n".join(body),
         "thumbnail": images[0] if images else None,
         "published": post.created_utc,
     }
@@ -290,17 +343,19 @@ def fetch_front_page(reddit: praw.Reddit, times: ReadingTimes | None = None) -> 
     # the logs, the ranks show what the per-subreddit cap left out.
     listing = []
     for rank, post in enumerate(hot):
-        entry = _entry(post, minutes=times.minutes(post.url))
-        seen = posts.get(entry["id"])
-        in_feed = seen is not None or not _subreddit_full(posts, entry["creator"], now)
-        listing.append([entry["id"], entry["creator"], rank, int(in_feed)])
+        pid, creator = post.fullname, f"r/{post.subreddit.display_name}"
+        seen = posts.get(pid)
+        in_feed = seen is not None or not _subreddit_full(posts, creator, now)
+        listing.append([pid, creator, rank, int(in_feed)])
         if not in_feed:
             # Left out, not remembered: a later fetch may still admit it.
             capped += 1
             continue
         new += seen is None
+        # Only now: the entry looks up the post's top comment.
+        entry = _entry(post, minutes=times.minutes(post.url))
         # Refresh what the post shows; keep when it first appeared and where.
-        posts[entry["id"]] = {
+        posts[pid] = {
             **entry,
             "first_seen": seen["first_seen"] if seen else now,
             "rank": seen["rank"] if seen else rank,

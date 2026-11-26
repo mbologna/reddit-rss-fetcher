@@ -12,7 +12,10 @@ Self-hosted Reddit RSS fetcher and subreddit archiver: authenticated feeds and M
   `GCS_BUCKET`, a loop writing to `OUTPUT_DIR` without).
 - `src/reddit_rss_fetcher/reading.py`: link posts' reading times: reads
   each linked page once, counts its article's words, and keeps the counts
-  in `reading-times.json`.
+  in `reading-times.json`; also the dots before a reading time.
+- `src/reddit_rss_fetcher/text.py`: plain text and excerpts out of a post's
+  HTML, a copy of feed-refinery's `text.py` rules so items read like its
+  items: change both together.
 - `src/reddit_rss_fetcher/server.py`: the FastAPI web service (feeds behind
   a token, `/health`, `POST /fetch`); console script `reddit-rss-server`,
   uvicorn on `$PORT` (Cloud Run sets it), default 8080. It reads

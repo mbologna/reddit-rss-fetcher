@@ -21,6 +21,9 @@ def _make_mock_front_post(
     created_utc=1700000000.0,
     author="poster",
     subreddit="python",
+    num_comments=12,
+    score=340,
+    comments=(),
     **media,
 ):
     """A Submission stand-in. A namespace, not a MagicMock: a MagicMock would
@@ -44,6 +47,9 @@ def _make_mock_front_post(
         created_utc=created_utc,
         author=author,
         subreddit=SimpleNamespace(display_name=subreddit),
+        num_comments=num_comments,
+        score=score,
+        comments=comments,
         **fields,
     )
 
@@ -74,7 +80,13 @@ def test_fetch_front_page_writes_rss_from_api(tmp_path, monkeypatch):
     assert "<p>Body &amp; more</p>" in description
     assert "r/python" in description
     assert "poster" not in xml.decode()
-    assert '<a href="https://example.com/article">[link]</a>' in description
+    # Laid out as feed-refinery's items: the text, the link labelled with its site, then the counts.
+    assert description == (
+        "<p>Body &amp; more</p>\n"
+        '<p><a href="https://example.com/article">example.com</a></p>\n'
+        '<p><a href="https://www.reddit.com/r/python/comments/xyz789/front_page_post/">12 comments</a>'
+        " · 340 points · r/python</p>"
+    )
 
 
 def test_a_link_posts_link_shows_the_pages_reading_time(tmp_path, monkeypatch, pages):
@@ -92,9 +104,93 @@ def test_a_link_posts_link_shows_the_pages_reading_time(tmp_path, monkeypatch, p
     description = items[0].findtext("description")
     # After the post's text, where one decides whether to read on.
     assert description.index("Body &amp; more") < description.index(
-        '<a href="https://example.com/article">[link · 10 min read]</a>'
+        '<a href="https://example.com/article">example.com</a> · ●●● 10 min read</p>'
     )
-    assert '<a href="https://example.com/short">[link]</a>' in items[1].findtext("description")
+    assert '<a href="https://example.com/short">example.com</a></p>' in items[1].findtext("description")
+
+
+def test_a_self_post_shows_about_800_characters_and_its_whole_texts_reading_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    sentence = "A sentence of about fifty characters, more or less. "
+    thread = "/r/python/comments/long/a_long_post/"
+    long = _make_mock_front_post(
+        post_id="long",
+        url=f"https://www.reddit.com{thread}",
+        permalink=thread,
+        selftext_html=f"<p>{sentence * 200}</p>",
+    )
+    whole = "<p>" + "ab " * 250 + "</p>"  # 250 words in 750 characters: the item shows all of it
+    short = _make_mock_front_post(
+        post_id="short", url="https://www.reddit.com/s/", permalink="/s/", selftext_html=whole, subreddit="rust"
+    )
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [long, short]
+
+    fetcher.fetch_front_page(mock_reddit)
+
+    items = ET.parse(tmp_path / "reddit-front-page.xml").findall("./channel/item")
+    description = items[0].findtext("description")
+    text = description.split("</p>")[0].removeprefix("<p>")
+    assert 400 <= len(text) <= 800 and text.endswith("less.")
+    # 1800 words at 230 a minute, with no link: the reading time alone.
+    assert "</p>\n<p>●●● 8 min read</p>\n<p><a " in description
+    assert "min read" not in items[1].findtext("description")
+
+
+def _comment(cid, body, author="alice", stickied=False):
+    return SimpleNamespace(
+        body=body,
+        body_html=f'<div class="md"><p>{body}</p></div>',
+        author=author,
+        stickied=stickied,
+        permalink=f"/r/python/comments/xyz789/front_page_post/{cid}/",
+    )
+
+
+def test_an_item_shows_the_top_comment_past_stickied_and_deleted_ones(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+    sentence = "A sentence of about fifty characters, more or less. "
+    comments = [
+        _comment("c1", "Read the rules", author="AutoModerator", stickied=True),
+        SimpleNamespace(count=4, children=[]),  # a MoreComments: no body
+        _comment("c2", "[deleted]", author=None),
+        _comment("c3", "Nice &amp; " + sentence * 20, author="bob<"),
+        _comment("c4", "Never shown"),
+    ]
+    post = _make_mock_front_post(comments=comments)
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [post]
+
+    fetcher.fetch_front_page(mock_reddit)
+
+    description = ET.parse(tmp_path / "reddit-front-page.xml").findtext("./channel/item/description")
+    lines = description.split("\n")
+    assert lines[1] == '<p><a href="https://example.com/article">example.com</a></p>'
+    assert lines[2].startswith("<p>💬 <b>u/bob&lt;</b>: Nice &amp; A sentence")
+    assert lines[2].endswith(' <a href="https://www.reddit.com/r/python/comments/xyz789/front_page_post/c3/">→</a></p>')
+    comment = lines[2].split("</b>: ")[1].split(" <a ")[0]
+    assert 150 <= len(comment) <= 300 and comment.endswith("less.")
+    assert lines[3].startswith("<p><a ") and "12 comments" in lines[3]
+    assert "Never shown" not in description and "rules" not in description
+    assert post.comment_limit == fetcher.COMMENTS_FETCHED
+
+
+def test_a_failed_comment_lookup_keeps_the_post(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(fetcher, "OUTPUT_DIR", str(tmp_path))
+
+    class Failing:
+        def __iter__(self):
+            raise RuntimeError("HTTP 500")
+
+    mock_reddit = MagicMock()
+    mock_reddit.front.hot.return_value = [_make_mock_front_post(comments=Failing())]
+
+    with caplog.at_level("INFO"):
+        fetcher.fetch_front_page(mock_reddit)
+
+    description = ET.parse(tmp_path / "reddit-front-page.xml").findtext("./channel/item/description")
+    assert "💬" not in description and "12 comments" in description
+    assert "Top comment of t3_xyz789: RuntimeError" in caplog.messages
 
 
 def test_fetch_front_page_propagates_api_error(tmp_path, monkeypatch):
@@ -185,6 +281,7 @@ def test_front_page_admits_one_new_post_a_subreddit_a_day(tmp_path, monkeypatch,
     with caplog.at_level("INFO"):
         guids, _ = _run_front(tmp_path, monkeypatch, t, a, b, other)
     assert guids == ["t3_a", "t3_o"]
+    assert not hasattr(b, "comment_limit")  # a post left out costs no comment lookup
     assert "Front page: 3 listed, 2 new, 1 capped, 2 in feed" in caplog.messages
     listing = '[["t3_a","r/python",0,1],["t3_b","r/python",1,0],["t3_o","r/rust",2,1]]'
     assert f"Front page listing: {listing}" in caplog.messages
@@ -439,8 +536,8 @@ def test_fetch_subreddit_shows_a_link_posts_reading_time(tmp_path, monkeypatch, 
     fetcher.fetch_subreddit(mock_reddit, "python")
 
     descriptions = [i.findtext("description") for i in ET.parse(tmp_path / "python.xml").findall("./channel/item")]
-    assert '<a href="https://example.com/article">[link · 2 min read]</a>' in descriptions[0]
-    assert "min read" not in descriptions[1]  # a self post shows its whole text
+    assert '<a href="https://example.com/article">example.com</a> · ●○○ 2 min read</p>' in descriptions[0]
+    assert "min read" not in descriptions[1]  # a short self post shows its whole text
 
 
 def test_fetch_subreddit_links_thread_and_tokenised_archive(tmp_path, monkeypatch):
@@ -458,10 +555,10 @@ def test_fetch_subreddit_links_thread_and_tokenised_archive(tmp_path, monkeypatc
     description = item.findtext("description")
     (md,) = (tmp_path / "testsubreddit").glob("*.md")
     archive = f"https://example.com/testsubreddit/{md.name}?token=s3cr%26t"
-    assert f'<a href="{archive}">[archived copy]</a>' in description
-    # A self post links its thread once, as [comments], not also as [link].
-    assert "[link]" not in description
-    assert f'<a href="{thread}">[comments]</a>' in description
+    assert description.endswith(f' · r/testsubreddit · <a href="{archive}">archived copy</a></p>')
+    # A self post links its thread once, with its comments, not also as its link.
+    assert description.count("<a ") == 2
+    assert f'<a href="{thread}">12 comments</a> · 340 points' in description
 
 
 def test_fetch_subreddit_archive_link_without_token(tmp_path, monkeypatch):
@@ -474,7 +571,7 @@ def test_fetch_subreddit_archive_link_without_token(tmp_path, monkeypatch):
     fetcher.fetch_subreddit(mock_reddit, "testsubreddit")
 
     description = ET.parse(tmp_path / "testsubreddit.xml").findtext("./channel/item/description")
-    assert '.md">[archived copy]</a>' in description
+    assert '.md">archived copy</a></p>' in description
 
 
 def test_fetch_subreddit_uses_correct_subreddit_name(tmp_path, monkeypatch):
