@@ -489,7 +489,8 @@ def run_all() -> bool:
     """Run every step; True, and a new last-run, only when none failed.
 
     A failed step doesn't stop the others, but leaves last-run at the last
-    good cycle, so /last-run goes stale and the uptime check notices.
+    good cycle, so /health turns 503 once that is older than STALE_AFTER_HOURS
+    and the uptime check notices.
     """
     log.info("Starting fetch cycle")
     if not has_credentials():
